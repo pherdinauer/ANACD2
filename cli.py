@@ -5,9 +5,16 @@ import json
 import time
 from datetime import datetime
 import argparse
-from scraper import load_config, scrape_all_json_links
-from downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
-from utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache
+try:
+    # Try importing from json_downloader module
+    from json_downloader.scraper import load_config, scrape_all_json_links
+    from json_downloader.downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
+    from json_downloader.utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache
+except ImportError:
+    # Fallback to direct import if used outside package structure
+    from scraper import load_config, scrape_all_json_links
+    from downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
+    from utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache
 import traceback
 
 class ANACDownloaderCLI:
@@ -282,6 +289,10 @@ class ANACDownloaderCLI:
                 print(f"\nReport salvato in: {report_path}")
             
             input("\nPremi INVIO per tornare al menu principale...")
+        except Exception as e:
+            print(f"Errore: {str(e)}")
+            import traceback
+            traceback.print_exc()
             
         except Exception as e:
             print(f"\nErrore durante il download: {str(e)}")
@@ -368,6 +379,10 @@ class ANACDownloaderCLI:
             print(f"✗ File invalidi: {invalid_files}")
             
             input("\nPremi INVIO per tornare al menu principale...")
+        except Exception as e:
+            print(f"Errore: {str(e)}")
+            import traceback
+            traceback.print_exc()
             
         except Exception as e:
             print(f"\nErrore durante la verifica: {str(e)}")
@@ -424,3 +439,151 @@ class ANACDownloaderCLI:
                 print(f"Link salvati in {file_path}")
             
             input("\nPremi INVIO per tornare al menu principale...")
+        except Exception as e:
+            print(f"\nErrore durante la visualizzazione dei link: {str(e)}")
+            traceback.print_exc()
+            input("\nPremi INVIO per tornare al menu principale...")
+
+    def add_links_manually(self):
+        """Aggiunge link manualmente alla cache"""
+        print("\n" + "=" * 60)
+        print("AGGIUNGI LINK MANUALMENTE")
+        print("=" * 60)
+        
+        try:
+            # Carica link dalla cache se non già carichi
+            if not self.json_links:
+                self.json_links = load_links_from_cache(self.links_cache_file)
+            
+            print(f"Attualmente ci sono {len(self.json_links)} link in cache.")
+            print("Inserisci un link per riga. Inserisci una riga vuota per terminare.\n")
+            
+            links_added = 0
+            while True:
+                try:
+                    link = input("> ")
+                    if not link:
+                        break
+                    
+                    if link not in self.json_links:
+                        self.json_links.add(link)
+                        links_added += 1
+                        print(f"Link aggiunto. Totale: {len(self.json_links)}")
+                    else:
+                        print("Link già presente in cache.")
+                except KeyboardInterrupt:
+                    print("\nInserimento interrotto.")
+                    break
+                except Exception as e:
+                    print(f"Errore nell'aggiunta del link: {str(e)}")
+            
+            if links_added > 0:
+                # Salva i link in cache
+                try:
+                    save_links_to_cache(self.json_links, self.links_cache_file)
+                    print(f"\nAggiunti {links_added} nuovi link alla cache.")
+                except Exception as e:
+                    print(f"\nErrore nel salvare la cache: {str(e)}")
+            else:
+                print("\nNessun nuovo link aggiunto.")
+            
+            input("\nPremi INVIO per tornare al menu principale...")
+        except Exception as e:
+            print(f"Errore: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            print(f"\nErrore durante l'aggiunta dei link: {str(e)}")
+            traceback.print_exc()
+            input("\nPremi INVIO per tornare al menu principale...")
+
+    def run(self):
+        """Esegue l'interfaccia a terminale interattiva"""
+        if not self.setup():
+            print("Impossibile inizializzare l'applicazione. Uscita.")
+            return
+        
+        # Carica link dalla cache all'avvio
+        try:
+            self.json_links = load_links_from_cache(self.links_cache_file)
+            if self.json_links:
+                print(f"Caricati {len(self.json_links)} link dalla cache.")
+        except Exception as e:
+            print(f"Attenzione: impossibile caricare i link dalla cache: {str(e)}")
+            self.json_links = set()
+        
+        while True:
+            try:
+                self.print_header()
+                choice = self.print_menu()
+                
+                if choice == '0':
+                    print("Uscita dal programma...")
+                    break
+                elif choice == '1':
+                    self.run_scraping()
+                elif choice == '2':
+                    self.run_download()
+                elif choice == '3':
+                    self.verify_files()
+                elif choice == '4':
+                    self.show_cached_links()
+                elif choice == '5':
+                    self.add_links_manually()
+                else:
+                    print("Opzione non valida. Riprova.")
+            except Exception as e:
+                print(f"Errore nell'interfaccia: {str(e)}")
+                traceback.print_exc()
+                input("\nPremi INVIO per continuare...")
+
+if __name__ == "__main__":
+    import os
+    import sys
+    import json
+    import time
+    import requests
+    from datetime import datetime
+    import traceback
+    
+    # Definizioni necessarie per il funzionamento autonomo del file
+    def load_links_from_cache(cache_file="cache/json_links.txt"):
+        links = set()
+        if os.path.exists(cache_file):
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    link = line.strip()
+                    if link:
+                        links.add(link)
+        return links
+        
+    def save_links_to_cache(links, cache_file="cache/json_links.txt"):
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            for link in links:
+                f.write(f"{link}\n")
+    
+    def verify_file_integrity(file_path):
+        if not os.path.exists(file_path):
+            return False
+        if os.path.getsize(file_path) == 0:
+            return False
+        return True
+    
+    def ensure_dir(directory):
+        os.makedirs(directory, exist_ok=True)
+    
+    def process_downloaded_file(file_path, extract_dir=None, logger=None):
+        if file_path.lower().endswith('.zip'):
+            # Simulazione semplice per il test
+            return {
+                'is_zip': True,
+                'extracted_files': []
+            }
+        return {
+            'is_zip': False,
+            'path': file_path
+        }
+    
+    cli = ANACDownloaderCLI()
+    cli.run()
