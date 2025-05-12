@@ -1,10 +1,16 @@
 import os
+import sys
+import json
 import hashlib
 import logging
 import re
 import zipfile
+import random
+import time
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Carica variabili d'ambiente
 load_dotenv()
