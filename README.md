@@ -1,143 +1,110 @@
-# ANAC JSON Downloader
+# ANAC JSON Downloader - Versione Semplificata
 
-Utility per il download automatico di file JSON dal portale Open Data dell'Autorità Nazionale Anticorruzione (ANAC).
+Utility per il download di file JSON dal portale Open Data dell'Autorità Nazionale Anticorruzione (ANAC).
 
 ## Funzionalità
 
-- Scraping automatico delle pagine del portale ANAC
-- Individuazione e download di file JSON e ZIP contenenti JSON
+- Download di file JSON e ZIP contenenti dati ANAC
 - Estrazione automatica dei file JSON da archivi ZIP
-- Sistema di deduplicazione avanzata dei link
-- Gestione avanzata dei download con ripresa automatica
-- Memorizzazione e apprendimento automatico di dataset e link
+- Memorizzazione automatica dei link noti
 - Verifica dell'integrità dei file scaricati
 - Interfaccia a riga di comando completa
 
 ## Requisiti di sistema
 
-- Python 3.8 o superiore
-- Connessione internet
+- Python 3.7 o superiore
+- (Opzionale) tmux per esecuzione in background su Linux
 
 ## Installazione su Linux
 
-### 1. Clonare il repository
+### Metodo automatico (consigliato)
 
-```bash
-git clone https://github.com/yourusername/anac-json-downloader.git
-cd anac-json-downloader
-```
+1. Rendere eseguibile lo script di deployment:
+   ```bash
+   chmod +x deploy_anac.sh
+   ```
 
-### 2. Creare e attivare un ambiente virtuale
+2. Eseguire lo script di deployment:
+   ```bash
+   ./deploy_anac.sh
+   ```
 
-```bash
-python -m venv venv
-source venv/bin/activate
-```
+3. Avviare l'applicazione:
+   ```bash
+   ./start_anac.sh
+   ```
 
-### 3. Installare le dipendenze
+### Metodo manuale
 
-```bash
-pip install -r json_downloader/requirements.txt
-```
+1. Creare cartelle necessarie:
+   ```bash
+   mkdir -p log cache downloads
+   ```
 
-### 4. Installare i browser richiesti da Playwright
+2. Creare e attivare un ambiente virtuale:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-```bash
-playwright install chromium
-```
+3. Installare le dipendenze base:
+   ```bash
+   pip install requests python-dotenv beautifulsoup4 backoff
+   ```
 
-## Esecuzione
+4. Avviare l'applicazione:
+   ```bash
+   python3 run_anacd2.py
+   ```
 
-L'applicazione può essere avviata con:
+## Uso con tmux
 
-```bash
-python -m json_downloader.cli
-```
+Per eseguire l'applicazione in background usando tmux:
 
-## Esecuzione con tmux
+1. Avviare con lo script incluso:
+   ```bash
+   ./start_anac.sh
+   ```
 
-Per eseguire l'applicazione in background usando tmux (utile per esecuzioni su server remote):
+2. Per ricollegarsi a una sessione esistente:
+   ```bash
+   tmux attach -t anac
+   ```
 
-### 1. Installa tmux se non è già presente
-
-```bash
-sudo apt-get install tmux   # Per Debian/Ubuntu
-# o
-sudo yum install tmux       # Per CentOS/RHEL
-```
-
-### 2. Crea una nuova sessione tmux
-
-```bash
-tmux new -s anac_downloader
-```
-
-### 3. Attiva l'ambiente virtuale ed esegui l'applicazione
-
-```bash
-cd anac-json-downloader
-source venv/bin/activate
-python -m json_downloader.cli
-```
-
-### 4. Staccare la sessione (lasciando l'applicazione in esecuzione)
-
-Premi `Ctrl+B` seguito da `D` per staccare la sessione tmux.
-
-### 5. Ricollegarsi a una sessione esistente
-
-```bash
-tmux attach -t anac_downloader
-```
+3. Per staccarsi (lasciando l'app in esecuzione):
+   Premi `Ctrl+B` seguito da `D`
 
 ## Utilizzo dell'applicazione
 
-Una volta avviata, l'applicazione mostra un menu interattivo con le seguenti opzioni:
+L'applicazione mostra un menu interattivo con le seguenti opzioni:
 
-1. **Esegui scraping delle pagine web** - Trova tutti i dataset e file JSON/ZIP disponibili
-2. **Scarica i file JSON/ZIP trovati** - Scarica i file trovati durante lo scraping
-3. **Verifica integrità file già scaricati** - Controlla l'integrità dei file scaricati
-4. **Visualizza link in cache** - Mostra i link trovati e salvati nella cache
-5. **Aggiungi link manualmente alla cache** - Aggiungi nuovi link alla cache
-6. **Carica link da file esterno** - Importa link da un file di testo
-7. **Deduplicazione avanzata dei link** - Rimuovi link duplicati dalla cache
-8. **Gestisci dataset e link diretti noti** - Visualizza, aggiungi o rimuovi dataset e link noti
+1. **Scarica i file JSON/ZIP trovati** - Scarica i file presenti nella cache o nella lista predefinita
+2. **Verifica integrità file già scaricati** - Controlla l'integrità dei file scaricati
+3. **Visualizza link in cache** - Mostra i link salvati nella cache
+4. **Aggiungi link manualmente alla cache** - Aggiungi nuovi link alla cache
 0. **Esci dal programma**
-
-## Flusso di lavoro tipico
-
-1. Eseguire lo scraping per trovare i dataset disponibili
-2. Scaricare i file JSON/ZIP trovati
-3. Verificare l'integrità dei file scaricati
-4. Estrarre i file ZIP se necessario (l'applicazione può farlo automaticamente)
 
 ## Risoluzione dei problemi
 
-### Errori di visualizzazione durante l'esecuzione in tmux
+### L'applicazione non parte
 
-Se riscontri problemi di visualizzazione in tmux, prova a impostare la variabile d'ambiente TERM:
-
+Verifica che Python sia installato e che l'ambiente virtuale sia attivato:
 ```bash
-export TERM=xterm-256color
+python3 --version
+source venv/bin/activate
 ```
 
-### Errori di Playwright in ambiente headless
+### Errore "No module named..."
 
-Su server Linux senza interfaccia grafica, potrebbe essere necessario installare alcune dipendenze aggiuntive:
-
+Assicurati di aver installato tutte le dipendenze:
 ```bash
-# Per Debian/Ubuntu
-sudo apt-get install -y libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
-    libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2 \
-    libasound2 libatk1.0-0 libatk-bridge2.0-0 libpangocairo-1.0-0 \
-    libgtk-3-0 libgbm1
+pip install requests python-dotenv beautifulsoup4 backoff
 ```
 
-### Errore "No module named json_downloader"
+### Problemi con tmux
 
-Se ricevi questo errore durante l'esecuzione, prova a eseguire direttamente lo script principale:
-
+Se tmux non funziona, puoi semplicemente eseguire l'applicazione direttamente:
 ```bash
-cd anac-json-downloader
-python json_downloader/cli.py
+source venv/bin/activate
+python3 run_anacd2.py
 ``` 
