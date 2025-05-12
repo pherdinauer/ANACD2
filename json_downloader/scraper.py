@@ -1,16 +1,26 @@
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from urllib.parse import urljoin, urlparse
 import json
 import os
 from pathlib import Path
 import time
 import re
-from urllib.parse import urljoin, urlparse
+import os
 try:
     # Try relative import format (when used as a package)
     from .utils import is_json_or_zip_link, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
 except ImportError:
     # Fallback to direct import (when used directly)
     from utils import is_json_or_zip_link, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
+
+# Check if Playwright should be disabled
+NO_PLAYWRIGHT = os.environ.get('NO_PLAYWRIGHT', '0') == '1'
+
+if not NO_PLAYWRIGHT:
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    except ImportError:
+        NO_PLAYWRIGHT = True
+        print("Avviso: Playwright non disponibile, utilizzo modalità senza scraping.")
 
 
 def load_config(config_path='config.json'):
@@ -61,67 +71,116 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
     if not config:
         config = {}
     
-    include_formats = config.get('include_formats', ['json'])
+    include_formats = config.get('include_formats', ['json', 'zip'])
     exclude_formats = config.get('exclude_formats', ['ttl', 'csv', 'xml'])
     
     soup = BeautifulSoup(page_content, 'html.parser')
     links = []
+    found_links_info = {}  # Per tenere traccia dei link trovati e del loro contesto
     
-    # Cerca tutti i link nella pagina, inclusi quelli con classe resource-url-analytics
-    for a in soup.find_all('a', href=True):
-        href = a['href']
-        href_lower = href.lower()
+    # 1. RICERCA AVANZATA DI LINK PER ATTRIBUTI E CLASSI SPECIFICHE
+    # Cerca tutti i link che potrebbero contenere risorse di dati
+    data_elements = [
+        # I più comuni contenitori di link di risorse
+        soup.find_all('a', class_=lambda c: c and ('resource-url' in c or 'download' in c)),
+        soup.find_all('a', attrs={'data-format': lambda f: f and f.lower() in include_formats}),
+        soup.find_all('a', attrs={'data-resource-id': True}),  # Link che identificano risorse
+        soup.find_all('a', href=lambda h: h and ('download' in h.lower() or 'resource' in h.lower() or 'dataset' in h.lower())),
         
-        # Escludi esplicitamente i formati non desiderati
-        if any(f'.{ext}' in href_lower or f'_{ext}.' in href_lower for ext in exclude_formats):
+        # Pulsanti o link di download
+        soup.find_all('button', class_=lambda c: c and ('download' in c or 'resource' in c)),
+        soup.find_all('a', class_=lambda c: c and ('btn' in c and 'download' in c)),
+        
+        # Contenitori di risorse
+        soup.select('.resources a'),  # Link all'interno di div con classe resources
+        soup.select('.resource-item a'),  # Link all'interno di elementi resource-item
+        soup.select('.dataset-resources a')  # Link all'interno di elementi dataset-resources
+    ]
+    
+    # Appiattisci l'elenco di tutti gli elementi e rimuovi duplicati
+    data_elements_flat = set()
+    for element_list in data_elements:
+        for element in element_list:
+            if hasattr(element, 'get') and element.get('href'):
+                data_elements_flat.add(element)
+    
+    # 2. RICERCA PER CONTENUTO TESTUALE
+    # Cerca link con testo specifico che suggerisce un download
+    download_texts = ['vai alla risorsa', 'download', 'scarica', 'json', 'zip', 'apri', 'dati', 'open data']
+    text_elements = soup.find_all('a', href=True)
+    
+    for a in text_elements:
+        # Controlla sia il testo del link che il testo dentro i tag figli
+        link_text = a.get_text().lower().strip()
+        
+        if any(text in link_text for text in download_texts):
+            data_elements_flat.add(a)
+    
+    # 3. ANALISI DI TUTTI I LINK TROVATI
+    for element in data_elements_flat:
+        href = element.get('href')
+        if not href:
             continue
             
-        # Verifica se il link punta a file JSON o ZIP che probabilmente contiene JSON
-        if is_json_or_zip_link(href):
-            # Normalizza URL
-            full_url = href
-            if not href.startswith(('http://', 'https://')):
-                if href.startswith('/'):
-                    base_domain = urlparse(base_url).scheme + "://" + urlparse(base_url).netloc
-                    full_url = urljoin(base_domain, href)
-                else:
-                    full_url = urljoin(base_url, href)
+        href_lower = href.lower()
+        element_text = element.get_text().lower().strip()
+        
+        # Ignora link che puntano esplicitamente a formati da escludere
+        if any(f'.{ext}' in href_lower for ext in exclude_formats):
+            continue
             
+        # Verifica se il link punta a file JSON o ZIP, o contiene percorsi specifici
+        is_valid_link = (
+            is_json_or_zip_link(href) or
+            '/download/' in href_lower or
+            '/filesystem/' in href_lower or
+            '/resource/' in href_lower or
+            'format=json' in href_lower or
+            any(fmt in href_lower for fmt in include_formats)
+        )
+        
+        if not is_valid_link:
+            # Ultima chance: controlla se il testo suggerisce un download di JSON/ZIP
+            if not ('json' in element_text or 'zip' in element_text or 'download' in element_text):
+                continue
+        
+        # Normalizza URL
+        full_url = href
+        if not href.startswith(('http://', 'https://')):
+            if href.startswith('/'):
+                base_domain = urlparse(base_url).scheme + "://" + urlparse(base_url).netloc
+                full_url = urljoin(base_domain, href)
+            else:
+                full_url = urljoin(base_url, href)
+        
+        # Aggiungi il link solo se non è già stato trovato
+        if full_url not in links:
             links.append(full_url)
+            
+            # Memorizza informazioni sul link per il log
+            found_links_info[full_url] = {
+                'text': element_text if element_text else 'N/A',
+                'filename': href.split('/')[-1] if '/' in href else href,
+                'context': 'formato esplicito' if any(fmt in href_lower for fmt in include_formats) else 'potenziale risorsa'
+            }
+            
             if logger:
-                file_type = "ZIP con JSON" if ".zip" in href else "JSON"
-                logger.info(f"Trovato link {file_type}: {full_url}")
+                file_type = "ZIP" if ".zip" in href_lower else "JSON" if ".json" in href_lower else "Risorsa"
+                logger.info(f"Trovato link {file_type}: {full_url} (testo: {element_text[:30]}...)")
     
-    # Cerca specificamente link con testo "Vai alla risorsa", "Download", ecc.
-    download_texts = ['vai alla risorsa', 'download', 'scarica', 'json', 'zip']
-    for a in soup.find_all('a'):
-        if a.has_attr('href'):
-            # Controlla sia il testo del link che il testo dentro i tag figli
-            link_text = a.get_text().lower()
-            if any(text in link_text for text in download_texts):
-                href = a['href']
-                href_lower = href.lower()
-                
-                # Escludi esplicitamente i formati non desiderati
-                if any(f'.{ext}' in href_lower or f'_{ext}.' in href_lower for ext in exclude_formats):
-                    continue
-                
-                # Controllo esplicito per formato JSON nei link con classe resource
-                if not any(fmt in href_lower for fmt in include_formats) and 'resource' not in href_lower:
-                    continue
-                
-                full_url = href
-                if not href.startswith(('http://', 'https://')):
-                    if href.startswith('/'):
-                        base_domain = urlparse(base_url).scheme + "://" + urlparse(base_url).netloc
-                        full_url = urljoin(base_domain, href)
-                    else:
-                        full_url = urljoin(base_url, href)
-                
-                if full_url not in links:  # Evita duplicati
-                    links.append(full_url)
-                    if logger:
-                        logger.info(f"Trovato link download (dal testo): {full_url}")
+    # 4. ELABORAZIONE FINALE E LOGGING
+    if logger:
+        logger.info(f"Estratti {len(links)} link potenziali JSON/ZIP dalla pagina dataset")
+        
+        # Log dettagliato dei link trovati
+        if links:
+            logger.debug("Dettaglio dei link trovati:")
+            for i, link in enumerate(links, 1):
+                info = found_links_info.get(link, {})
+                logger.debug(f"  {i}. {link}")
+                logger.debug(f"     - Testo: {info.get('text', 'N/A')}")
+                logger.debug(f"     - File: {info.get('filename', 'N/A')}")
+                logger.debug(f"     - Tipo: {info.get('context', 'N/A')}")
     
     return links
 
@@ -154,21 +213,50 @@ def find_next_page(page_content, current_page, logger=None):
 
 def add_known_datasets(all_dataset_links, logger=None):
     """Aggiunge dataset noti che potrebbero non essere stati trovati dallo scraping."""
-    # Lista predefinita di dataset noti
+    # Lista predefinita di dataset noti - ESTESA con tutti i dataset conosciuti
     default_known_datasets = [
+        # Dataset principali
         "https://dati.anticorruzione.it/opendata/dataset/smartcig-tipo-fattispecie-contrattuale",
         "https://dati.anticorruzione.it/opendata/dataset/anac-dataset",
         "https://dati.anticorruzione.it/opendata/dataset/anac-datamart",
+        "https://dati.anticorruzione.it/opendata/dataset/dati-contratti-pubblici",
+        "https://dati.anticorruzione.it/opendata/dataset/soggetti-attuatori-pnrr",
+        
+        # Dataset OCDS (Open Contracting Data Standard) per anni specifici
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2022",
-        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordnari-2020",
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2021",
+        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2020",
+        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordnari-2020",  # Variante con errore di ortografia nel sito ANAC
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2019",
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2018",
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2017",
         "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2016",
-        "https://dati.anticorruzione.it/opendata/dataset/dati-contratti-pubblici",
+        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2015",  # Possibili anni extra
+        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2014",
+        "https://dati.anticorruzione.it/opendata/dataset/ocds-appalti-ordinari-2013",
+        
+        # Dataset sulle procedure di gara
         "https://dati.anticorruzione.it/opendata/dataset/informazioni-sulle-procedure-di-gara-indette-a-partire-dal-1-gennaio-2019",
-        "https://dati.anticorruzione.it/opendata/dataset/soggetti-attuatori-pnrr"
+        "https://dati.anticorruzione.it/opendata/dataset/informazioni-sulle-singole-procedure-di-affidamento",
+        "https://dati.anticorruzione.it/opendata/dataset/procedure-di-affidamento-ex-art-32-l-190-2012",
+        
+        # Dataset vari
+        "https://dati.anticorruzione.it/opendata/dataset/piano-triennale-di-prevenzione-della-corruzione-e-della-trasparenza",
+        "https://dati.anticorruzione.it/opendata/dataset/autorita-nazionale-anticorruzione",
+        "https://dati.anticorruzione.it/opendata/dataset/vigilanza-collaborativa",
+        "https://dati.anticorruzione.it/opendata/dataset/whistleblowing",
+        "https://dati.anticorruzione.it/opendata/dataset/albo-delle-stazioni-appaltanti-qualificate",
+        "https://dati.anticorruzione.it/opendata/dataset/albo-arbitri-camerali",
+        "https://dati.anticorruzione.it/opendata/dataset/elenco-delle-amministrazioni-aggiudicatrici",
+        "https://dati.anticorruzione.it/opendata/dataset/legge-1902012-art-1-comma-32",
+        
+        # Ricerche generiche che potrebbero identificare dataset non specificati sopra
+        "https://dati.anticorruzione.it/opendata/dataset?q=gare",
+        "https://dati.anticorruzione.it/opendata/dataset?q=appalti",
+        "https://dati.anticorruzione.it/opendata/dataset?q=contratti",
+        "https://dati.anticorruzione.it/opendata/dataset?q=anac",
+        "https://dati.anticorruzione.it/opendata/dataset?q=ocds",
+        "https://dati.anticorruzione.it/opendata/dataset?q=json"
     ]
     
     # Carica dataset salvati in precedenza
@@ -177,13 +265,20 @@ def add_known_datasets(all_dataset_links, logger=None):
     # Unisci i dataset predefiniti con quelli salvati
     known_datasets = list(set(default_known_datasets + cached_datasets))
     
+    # Verifica se esistono dataset con varianti nel nome (maiuscole/minuscole, trattini, ecc.)
+    normalized_links = {link.lower().replace('-', '').replace('_', ''): link for link in all_dataset_links}
+    
     added_count = 0
     for dataset in known_datasets:
+        # Confronto diretto
         if dataset not in all_dataset_links:
-            all_dataset_links.append(dataset)
-            added_count += 1
-            if logger:
-                logger.info(f"Aggiunto dataset noto: {dataset}")
+            # Confronto normalizzato (ignora maiuscole/minuscole e simboli)
+            normalized_dataset = dataset.lower().replace('-', '').replace('_', '')
+            if normalized_dataset not in normalized_links:
+                all_dataset_links.append(dataset)
+                added_count += 1
+                if logger:
+                    logger.info(f"Aggiunto dataset noto: {dataset}")
     
     if logger and added_count > 0:
         logger.info(f"Aggiunti {added_count} dataset noti alla lista di scraping")
@@ -192,6 +287,70 @@ def add_known_datasets(all_dataset_links, logger=None):
 
 
 def scrape_all_json_links(config, logger=None):
+    """
+    Funzione principale per lo scraping. Se Playwright non è disponibile,
+    restituisce solo link noti salvati in cache o predefiniti.
+    """
+    # Se Playwright non è disponibile o disabilitato, utilizza solo link noti
+    if NO_PLAYWRIGHT:
+        if logger:
+            logger.info("Modalità senza scraping attiva: utilizzo solo link noti.")
+        
+        # Carica i dataset noti
+        known_datasets = load_datasets_from_cache()
+        
+        # Lista predefinita di link diretti noti - LISTA ESTESA con tutti i link diretti conosciuti
+        default_known_direct_links = [
+            # SmartCIG e fattispecie contrattuale
+            "https://dati.anticorruzione.it/opendata/download/dataset/smartcig-tipo-fattispecie-contrattuale/filesystem/smartcig-tipo-fattispecie-contrattuale_json.zip",
+            
+            # Soggetti attuatori PNRR
+            "https://dati.anticorruzione.it/opendata/download/dataset/soggetti-attuatori-pnrr/filesystem/soggetti-attuatori-pnrr_json.zip",
+            
+            # Dati contratti pubblici
+            "https://dati.anticorruzione.it/opendata/download/dataset/dati-contratti-pubblici/filesystem/dati-contratti-pubblici_json.zip",
+            
+            # Dataset e datamart ANAC
+            "https://dati.anticorruzione.it/opendata/download/dataset/anac-dataset/filesystem/anac-dataset_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/anac-datamart/filesystem/anac-datamart_json.zip",
+            
+            # OCDS appalti ordinari (per anno)
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2022/filesystem/ocds-appalti-ordinari-2022_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2021/filesystem/ocds-appalti-ordinari-2021_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2020/filesystem/ocds-appalti-ordinari-2020_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2019/filesystem/ocds-appalti-ordinari-2019_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2018/filesystem/ocds-appalti-ordinari-2018_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2017/filesystem/ocds-appalti-ordinari-2017_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2016/filesystem/ocds-appalti-ordinari-2016_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2015/filesystem/ocds-appalti-ordinari-2015_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2014/filesystem/ocds-appalti-ordinari-2014_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordinari-2013/filesystem/ocds-appalti-ordinari-2013_json.zip",
+            
+            # Variante con errore di ortografia nel sito ANAC
+            "https://dati.anticorruzione.it/opendata/download/dataset/ocds-appalti-ordnari-2020/filesystem/ocds-appalti-ordnari-2020_json.zip",
+            
+            # Informazioni sulle procedure di gara
+            "https://dati.anticorruzione.it/opendata/download/dataset/informazioni-sulle-procedure-di-gara-indette-a-partire-dal-1-gennaio-2019/filesystem/informazioni-sulle-procedure-di-gara-indette-a-partire-dal-1-gennaio-2019_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/informazioni-sulle-singole-procedure-di-affidamento/filesystem/informazioni-sulle-singole-procedure-di-affidamento_json.zip",
+            
+            # Varianti note dei percorsi di download
+            "https://dati.anticorruzione.it/opendata/download/dataset/dati-contratti-pubblici/resource/dati-contratti-pubblici_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/anac-dataset/resource/anac-dataset_json.zip",
+            "https://dati.anticorruzione.it/opendata/download/dataset/anac-datamart/resource/anac-datamart_json.zip"
+        ]
+        
+        # Carica link noti dalla cache
+        cached_direct_links = load_direct_links_from_cache()
+        
+        # Unisci tutti i link noti e rimuovi duplicati
+        all_links = set(default_known_direct_links + cached_direct_links)
+        
+        if logger:
+            logger.info(f"Trovati {len(all_links)} link noti da file cache e predefiniti.")
+        
+        return all_links
+        
+    # Altrimenti, procedi con il normale scraping
     all_json_links = set()
     base_url = config['base_url']
     visited_datasets = set()

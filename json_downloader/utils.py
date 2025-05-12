@@ -97,19 +97,72 @@ def extract_zip_files(zip_path, extract_dir, logger=None):
 
 
 def is_json_or_zip_link(url):
-    """Verifica se l'URL punta a un file JSON o ZIP che probabilmente contiene JSON."""
-    url_lower = url.lower()
-    
-    # Escludi esplicitamente file TTL e CSV
-    if '_ttl.' in url_lower or '_csv.' in url_lower or url_lower.endswith('.ttl') or url_lower.endswith('.csv'):
+    """
+    Determina se un URL è un link a un file JSON o a un file ZIP che potrebbe contenere JSON.
+    Ora include una più ampia gamma di pattern di rilevamento per catturare tutti i possibili formati.
+    """
+    if not url:
         return False
     
-    # Accetta solo file JSON o ZIP che verosimilmente contengono JSON
-    return (
-        '.json' in url_lower or 
-        ('_json' in url_lower and '.zip' in url_lower) or
-        ('json' in url_lower and '.zip' in url_lower)
-    )
+    url_lower = url.lower()
+    
+    # Estensioni esplicite
+    is_json = url_lower.endswith('.json') or '_json.' in url_lower or '.json?' in url_lower
+    is_zip = url_lower.endswith('.zip') or '_zip.' in url_lower or '.zip?' in url_lower
+    
+    # Pattern comuni nei link ANAC
+    common_patterns = [
+        '/filesystem/[^/]*_json',  # Pattern tipico di ANAC per file JSON
+        '/resource/[^/]*_json',    # Variante del pattern per risorse
+        '/download/[^/]*json',     # Link generici di download con JSON nel nome
+        'format=json',             # Parametro di formato esplicito
+        '/json/',                  # Directory JSON
+        '_json_',                  # Parte del nome file
+        'json_download',           # Indicazione di download JSON
+        'download_json',
+        'json-data',
+        'data.json'
+    ]
+    
+    # Pattern per ZIP che probabilmente contengono JSON
+    zip_patterns = [
+        '/filesystem/[^/]*_json\.zip',  # Pattern tipico ANAC per ZIP contenenti JSON
+        '/resource/[^/]*_json\.zip',    # Variante per risorse
+        'json.*\.zip',                  # Qualsiasi menzione di JSON seguito da .zip
+        '_json_.*\.zip',
+        'json[^/]*\.zip'
+    ]
+    
+    # Percorsi specifici ANAC che sappiamo contenere JSON
+    anac_specific_paths = [
+        '/opendata/download/dataset/',  # Download da dataset ANAC
+        '/download/dataset/',           # Versione abbreviata
+        '/anac-dataset/',               # Dataset ANAC specifici
+        '/anac-datamart/',
+        '/dati-contratti-pubblici/',
+        '/ocds-appalti-ordinari-',      # Dataset OCDS per anno
+        '/smartcig-tipo-fattispecie-contrattuale/' # SmartCIG
+    ]
+    
+    # Controlla estensioni esplicite
+    if is_json:
+        return True
+    
+    # Controlla se è un ZIP che probabilmente contiene JSON
+    if is_zip:
+        # Cerca pattern che suggeriscono che il file ZIP contiene JSON
+        if any(pattern in url_lower for pattern in zip_patterns + anac_specific_paths):
+            return True
+        # Se contiene esplicitamente "json" nel nome del file ZIP, è probabilmente un JSON compresso
+        filename = url.split('/')[-1] if '/' in url else url
+        if 'json' in filename.lower():
+            return True
+    
+    # Controlla altri pattern comuni per JSON o percorsi ANAC specifici
+    if any(pattern in url_lower for pattern in common_patterns + anac_specific_paths):
+        return True
+    
+    return False
 
 def save_links_to_cache(links, cache_file="cache/json_links.txt"):
     """Salva i link trovati in un file cache."""
