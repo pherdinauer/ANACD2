@@ -1,5 +1,5 @@
 import sys
-from cli import ANACDownloaderCLI
+from json_downloader.cli import ANACDownloaderCLI
 
 def main():
     # Avvia l'interfaccia CLI
