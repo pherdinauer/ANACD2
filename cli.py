@@ -29,10 +29,27 @@ class ANACDownloaderCLI:
     def setup(self):
         """Initialize application settings and create required directories."""
         try:
-            # Ensure required directories exist
-            os.makedirs(self.config['download_dir'], exist_ok=True)
-            os.makedirs(os.path.dirname(self.config['log_file']), exist_ok=True)
-            os.makedirs('cache', exist_ok=True)
+            # Ensure required directories exist with proper error handling
+            for directory in [self.config['download_dir'], os.path.dirname(self.config['log_file']), 'cache']:
+                try:
+                    os.makedirs(directory, exist_ok=True)
+                    # Verifica se la directory è stata effettivamente creata e ha permessi di scrittura
+                    if not os.path.exists(directory):
+                        print(f"ERRORE: Impossibile creare la directory {directory}")
+                        return False
+                    # Verifica i permessi di scrittura
+                    test_file = os.path.join(directory, '.write_test')
+                    try:
+                        with open(test_file, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file)
+                    except (PermissionError, IOError) as pe:
+                        print(f"ERRORE: Non hai permessi di scrittura nella directory {directory}")
+                        print(f"Dettagli errore: {str(pe)}")
+                        return False
+                except Exception as dir_error:
+                    print(f"ERRORE nella creazione della directory {directory}: {str(dir_error)}")
+                    return False
             
             self.links_cache_file = 'cache/json_links.txt'
             
@@ -40,9 +57,15 @@ class ANACDownloaderCLI:
             self.logger = setup_logger(self.config['log_file'])
             self.logger.info("ANAC JSON Downloader avviato")
             
+            # Verifica e imposta correttamente le directory di download
+            self.download_dir = os.path.abspath(self.config['download_dir'])
+            self.config['download_dir'] = self.download_dir
+            self.logger.info(f"Directory di download impostata a: {self.download_dir}")
+            
             return True
         except Exception as e:
             print(f"Errore durante l'inizializzazione: {str(e)}")
+            traceback.print_exc()
             return False
     
     def print_welcome(self):
@@ -360,8 +383,28 @@ class ANACDownloaderCLI:
                 # Full path with dataset subfolder
                 try:
                     dataset_folder = os.path.join(self.config['download_dir'], dataset_name)
-                    os.makedirs(dataset_folder, exist_ok=True)
-                    print(f"Cartella creata/verificata: {dataset_folder}")
+                    try:
+                        os.makedirs(dataset_folder, exist_ok=True)
+                        # Verifica immediata dei permessi
+                        test_file = os.path.join(dataset_folder, '.write_test')
+                        with open(test_file, 'w') as f:
+                            f.write('test')
+                        os.remove(test_file)
+                        print(f"Cartella creata/verificata: {dataset_folder} (permessi OK)")
+                    except PermissionError as pe:
+                        print(f"Errore di permessi nella cartella {dataset_folder}: {str(pe)}")
+                        print("Tentativo di utilizzo della cartella principale...")
+                        dataset_folder = self.config['download_dir']
+                        # Verifica anche la cartella principale
+                        test_file = os.path.join(dataset_folder, '.write_test')
+                        try:
+                            with open(test_file, 'w') as f:
+                                f.write('test')
+                            os.remove(test_file)
+                        except:
+                            # Se fallisce anche qui, usa la directory corrente
+                            print("Errore di permessi anche nella cartella principale.")
+                            dataset_folder = os.path.abspath('.')
                 except Exception as folder_error:
                     print(f"Errore nella creazione della cartella {dataset_folder}: {str(folder_error)}")
                     print("Utilizzo cartella principale per i download...")
@@ -370,7 +413,9 @@ class ANACDownloaderCLI:
                 # Verifica se la cartella esiste effettivamente dopo la creazione
                 if not os.path.exists(dataset_folder):
                     print(f"Impossibile verificare la cartella {dataset_folder}. Utilizzo percorso alternativo.")
-                    dataset_folder = os.path.abspath('.')  # Usa la directory corrente
+                    # Prova la directory di lavoro corrente come ultima risorsa
+                    dataset_folder = os.path.abspath('.')
+                    print(f"Usando directory corrente: {dataset_folder}")
                 
                 # Combina percorso cartella e nome file
                 file_path = os.path.join(dataset_folder, file_name)

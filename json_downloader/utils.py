@@ -42,7 +42,38 @@ def file_exists(file_path):
 
 
 def ensure_dir(directory):
-    Path(directory).mkdir(parents=True, exist_ok=True)
+    """
+    Crea una directory se non esiste e verifica che sia scrivibile.
+    Ritorna True se la directory è utilizzabile, False altrimenti.
+    """
+    # Normalizza il percorso
+    directory = os.path.abspath(os.path.expanduser(directory))
+    
+    # Crea la directory se non esiste
+    try:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Errore nella creazione della directory {directory}: {str(e)}")
+        return False
+    
+    # Verifica che la directory esista effettivamente
+    if not os.path.exists(directory):
+        print(f"Directory {directory} non è stata creata correttamente")
+        return False
+    
+    # Verifica i permessi di scrittura creando un file di test
+    test_file = os.path.join(directory, '.write_test')
+    try:
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        return True
+    except (PermissionError, IOError) as e:
+        print(f"Non hai permessi di scrittura nella directory {directory}: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"Errore sconosciuto nel verificare i permessi per {directory}: {str(e)}")
+        return False
 
 
 def normalize_url(url, base_url):

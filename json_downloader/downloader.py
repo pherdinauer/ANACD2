@@ -20,7 +20,17 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
     Scarica un file da un URL con supporto per download a chunk, retry con backoff esponenziale,
     e visualizzazione della velocità e dimensione totale.
     """
-    ensure_dir(os.path.dirname(dest_path))
+    # Normalizza il percorso di destinazione
+    dest_path = os.path.abspath(os.path.expanduser(dest_path))
+    
+    # Crea la directory di destinazione se non esiste
+    if not ensure_dir(os.path.dirname(dest_path)):
+        error_msg = f"Impossibile creare o accedere alla directory per {dest_path}"
+        if logger:
+            logger.error(error_msg)
+        if show_progress:
+            print(f"\n{error_msg}")
+        return None
     
     # Headers per simulare una richiesta da browser
     headers = {
