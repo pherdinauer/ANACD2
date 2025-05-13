@@ -20,17 +20,52 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
     Scarica un file da un URL con supporto per download a chunk, retry con backoff esponenziale,
     e visualizzazione della velocità e dimensione totale.
     """
+    # Messaggi di debug per la risoluzione problemi Linux
+    print(f"DEBUG_DOWN: Avvio download da {url}")
+    print(f"DEBUG_DOWN: Percorso destinazione: {dest_path}")
+    
     # Normalizza il percorso di destinazione
     dest_path = os.path.abspath(os.path.expanduser(dest_path))
+    print(f"DEBUG_DOWN: Percorso normalizzato: {dest_path}")
     
     # Crea la directory di destinazione se non esiste
-    if not ensure_dir(os.path.dirname(dest_path)):
+    dest_dir = os.path.dirname(dest_path)
+    print(f"DEBUG_DOWN: Verifica directory: {dest_dir}")
+    
+    # Messaggio di debug prima di chiamare ensure_dir
+    print(f"DEBUG_DOWN: Tentativo creazione/verifica directory {dest_dir}")
+    
+    # Log funzione ensure_dir
+    dir_result = ensure_dir(dest_dir)
+    print(f"DEBUG_DOWN: Risultato ensure_dir: {dir_result}")
+    
+    if not dir_result:
         error_msg = f"Impossibile creare o accedere alla directory per {dest_path}"
         if logger:
             logger.error(error_msg)
         if show_progress:
             print(f"\n{error_msg}")
-        return None
+        print(f"DEBUG_DOWN: ERRORE - {error_msg}")
+        
+        # Tentativo di fallback
+        print(f"DEBUG_DOWN: Tentativo fallback creazione manuale directory")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            print(f"DEBUG_DOWN: Directory creata manualmente")
+            
+            # Test scrittura dopo creazione manuale
+            test_file = os.path.join(dest_dir, '.test_write')
+            try:
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.remove(test_file)
+                print(f"DEBUG_DOWN: Test scrittura superato dopo creazione manuale")
+            except Exception as we:
+                print(f"DEBUG_DOWN: Test scrittura fallito: {str(we)}")
+                return None
+        except Exception as me:
+            print(f"DEBUG_DOWN: Fallback fallito: {str(me)}")
+            return None
     
     # Headers per simulare una richiesta da browser
     headers = {
@@ -44,29 +79,36 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
     # Prima richiesta HEAD per ottenere dimensione totale (se disponibile)
     content_length = None
     try:
+        print(f"DEBUG_DOWN: Richiesta HEAD a {url}")
         head_response = requests.head(url, headers=headers, timeout=10)
         if head_response.ok and 'content-length' in head_response.headers:
             content_length = int(head_response.headers['content-length'])
             if content_length > 0 and show_progress:
                 print(f"Dimensione file: {format_size(content_length)}")
+                print(f"DEBUG_DOWN: Dimensione file rilevata: {content_length} bytes")
     except Exception as e:
+        print(f"DEBUG_DOWN: Errore HEAD request: {str(e)}")
         if logger:
             logger.debug(f"Impossibile determinare dimensione file per {url}: {e}")
     
     # Ciclo dei tentativi di download con backoff esponenziale
     while attempt < max_retries:
         try:
+            print(f"DEBUG_DOWN: Tentativo download #{attempt+1}")
             # Per download ripreso, inizia da dove si era interrotto se il file esiste già
             resume_header = {}
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 resume_size = os.path.getsize(dest_path)
+                print(f"DEBUG_DOWN: File esistente, size={resume_size} bytes")
                 if content_length and resume_size >= content_length:
                     # File già completo
+                    print(f"DEBUG_DOWN: File già completo")
                     if logger:
                         logger.info(f"File {dest_path} già scaricato completamente")
                     return calculate_file_hash(dest_path, logger)
                 
                 resume_header = {'Range': f'bytes={resume_size}-'}
+                print(f"DEBUG_DOWN: Riprendo download da {resume_size} bytes")
                 if show_progress:
                     print(f"Ripresa download da {format_size(resume_size)}")
             
@@ -74,92 +116,135 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
             current_headers = {**headers, **resume_header}
             
             # Esegui il download
+            print(f"DEBUG_DOWN: Inizio richiesta GET a {url}")
             with requests.get(url, headers=current_headers, stream=True, timeout=60) as response:
+                print(f"DEBUG_DOWN: Risposta ricevuta, status={response.status_code}")
                 response.raise_for_status()
+                print(f"DEBUG_DOWN: Risposta validata")
                 
                 # Se stiamo riprendendo, il codice di stato dovrebbe essere 206
                 is_resuming = 'Range' in current_headers
                 if is_resuming and response.status_code != 206:
                     # Il server non supporta download parziali, ricomincia da capo
+                    print(f"DEBUG_DOWN: Server non supporta download parziali, ricomincio da zero")
                     if os.path.exists(dest_path):
                         os.remove(dest_path)
                     is_resuming = False
                 
                 total_size = int(response.headers.get('content-length', 0))
+                print(f"DEBUG_DOWN: Content-length dalla risposta: {total_size} bytes")
+                
                 # Se stiamo riprendendo, somma la dimensione già scaricata
                 if is_resuming and total_size > 0:
                     resume_size = os.path.getsize(dest_path)
                     total_size += resume_size
+                    print(f"DEBUG_DOWN: Dimensione totale stimata (con ripresa): {total_size} bytes")
                 
                 if total_size > 0 and show_progress:
                     print(f"Scaricando {format_size(total_size)} da {url}")
                 
                 # Apri il file in append se riprendiamo, altrimenti in write
                 mode = 'ab' if is_resuming else 'wb'
+                print(f"DEBUG_DOWN: Apertura file con mode='{mode}'")
+                
+                # Verifica se il file è apribile prima di procedere
+                try:
+                    test_handle = open(dest_path, mode)
+                    test_handle.close()
+                    print(f"DEBUG_DOWN: Test apertura file riuscito")
+                except Exception as fe:
+                    print(f"DEBUG_DOWN: ERRORE apertura file: {str(fe)}")
+                    if logger:
+                        logger.error(f"Errore apertura file {dest_path}: {str(fe)}")
+                    if show_progress:
+                        print(f"\nErrore apertura file {dest_path}: {str(fe)}")
+                    return None
                 
                 h = hashlib.sha256()
                 downloaded = 0
                 start_time = time.time()
+                print(f"DEBUG_DOWN: Inizio download, orario={start_time}")
                 
                 # Se riprendiamo, prepara l'hash con il contenuto esistente
                 if is_resuming:
+                    print(f"DEBUG_DOWN: Carico contenuto esistente per hash")
                     with open(dest_path, 'rb') as f:
                         data = f.read()
                         h.update(data)
                     downloaded = len(data)
                 
-                with open(dest_path, mode) as f:
-                    # Variabili per il calcolo della velocità
-                    last_update_time = start_time
-                    last_downloaded = downloaded
-                    
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:  # Filtra keep-alive chunks vuoti
-                            f.write(chunk)
-                            h.update(chunk)
-                            downloaded += len(chunk)
-                            
-                            # Aggiorna velocità e progresso ogni secondo
-                            current_time = time.time()
-                            if show_progress and (current_time - last_update_time) >= 1:
-                                # Calcola velocità in bytes/secondo
-                                speed = (downloaded - last_downloaded) / (current_time - last_update_time)
+                # Apertura file per il download
+                print(f"DEBUG_DOWN: Apertura file per scrittura dati")
+                
+                try:
+                    with open(dest_path, mode) as f:
+                        # Variabili per il calcolo della velocità
+                        last_update_time = start_time
+                        last_downloaded = downloaded
+                        
+                        print(f"DEBUG_DOWN: Inizio download a chunk")
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:  # Filtra keep-alive chunks vuoti
+                                f.write(chunk)
+                                h.update(chunk)
+                                downloaded += len(chunk)
                                 
-                                # Stima del tempo rimanente
-                                if total_size > 0 and speed > 0:
-                                    remaining = (total_size - downloaded) / speed
-                                    eta = str(datetime.timedelta(seconds=int(remaining)))
-                                else:
-                                    eta = "sconosciuto"
-                                
-                                # Progresso in percentuale
-                                if total_size > 0:
-                                    percent = min(100, downloaded * 100 / total_size)
-                                    progress_bar = generate_progress_bar(percent)
-                                    print(f"\r{progress_bar} {percent:.1f}% | {format_size(downloaded)}/{format_size(total_size)} | {format_size(speed)}/s | ETA: {eta}", end='')
-                                else:
-                                    print(f"\rScaricati {format_size(downloaded)} | {format_size(speed)}/s", end='')
-                                
-                                last_update_time = current_time
-                                last_downloaded = downloaded
-                
-                total_time = time.time() - start_time
-                sha256 = h.hexdigest()
-                
-                if show_progress:
-                    if total_size > 0:
-                        print(f"\r{generate_progress_bar(100)} 100% | {format_size(total_size)} | Media: {format_size(downloaded/total_time)}/s | Completato in {total_time:.1f}s")
-                    else:
-                        print(f"\rScaricati {format_size(downloaded)} | Media: {format_size(downloaded/total_time)}/s | Completato in {total_time:.1f}s")
-                
-                if logger:
-                    logger.info(f"Scaricato {url} in {dest_path} ({format_size(downloaded)}, {total_time:.1f}s) SHA256={sha256}")
-                
-                return sha256
+                                # Aggiorna velocità e progresso ogni secondo
+                                current_time = time.time()
+                                if show_progress and (current_time - last_update_time) >= 1:
+                                    # Calcola velocità in bytes/secondo
+                                    speed = (downloaded - last_downloaded) / (current_time - last_update_time)
+                                    
+                                    # Stima del tempo rimanente
+                                    if total_size > 0 and speed > 0:
+                                        remaining = (total_size - downloaded) / speed
+                                        eta = str(datetime.timedelta(seconds=int(remaining)))
+                                    else:
+                                        eta = "sconosciuto"
+                                    
+                                    # Progresso in percentuale
+                                    if total_size > 0:
+                                        percent = min(100, downloaded * 100 / total_size)
+                                        progress_bar = generate_progress_bar(percent)
+                                        print(f"\r{progress_bar} {percent:.1f}% | {format_size(downloaded)}/{format_size(total_size)} | {format_size(speed)}/s | ETA: {eta}", end='')
+                                    else:
+                                        print(f"\rScaricati {format_size(downloaded)} | {format_size(speed)}/s", end='')
+                                    
+                                    last_update_time = current_time
+                                    last_downloaded = downloaded
+                        
+                        # Download completato con successo
+                        print(f"DEBUG_DOWN: Download completato con successo")
+                        
+                        total_time = time.time() - start_time
+                        sha256 = h.hexdigest()
+                        
+                        print(f"DEBUG_DOWN: Download completato in {total_time:.1f}s, SHA256={sha256}")
+                        print(f"DEBUG_DOWN: Dimensione finale file: {os.path.getsize(dest_path)} bytes")
+                        
+                        if show_progress:
+                            if total_size > 0:
+                                print(f"\r{generate_progress_bar(100)} 100% | {format_size(total_size)} | Media: {format_size(downloaded/total_time)}/s | Completato in {total_time:.1f}s")
+                            else:
+                                print(f"\rScaricati {format_size(downloaded)} | Media: {format_size(downloaded/total_time)}/s | Completato in {total_time:.1f}s")
+                        
+                        if logger:
+                            logger.info(f"Scaricato {url} in {dest_path} ({format_size(downloaded)}, {total_time:.1f}s) SHA256={sha256}")
+                        
+                        return sha256
+                except Exception as write_error:
+                    print(f"DEBUG_DOWN: ERRORE durante la scrittura: {str(write_error)}")
+                    if logger:
+                        logger.error(f"Errore durante la scrittura: {str(write_error)}")
+                    if show_progress:
+                        print(f"\nErrore durante la scrittura: {str(write_error)}")
+                    return None
                 
         except requests.exceptions.RequestException as e:
             attempt += 1
             wait_time = backoff ** attempt
+            
+            print(f"DEBUG_DOWN: Errore richiesta HTTP: {str(e)}")
             
             if show_progress:
                 print(f"\nErrore download: {str(e)}")
@@ -174,6 +259,9 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
             attempt += 1
             wait_time = backoff ** attempt
             
+            print(f"DEBUG_DOWN: Errore generico: {str(e)}")
+            print(f"DEBUG_DOWN: Tipo errore: {type(e).__name__}")
+            
             if show_progress:
                 print(f"\nErrore inatteso: {str(e)}")
                 print(f"Tentativo {attempt}/{max_retries} - Nuovo tentativo tra {wait_time}s...")
@@ -184,6 +272,8 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
             time.sleep(wait_time)
     
     # Tutti i tentativi sono falliti
+    print(f"DEBUG_DOWN: Download fallito definitivamente dopo {max_retries} tentativi")
+    
     if logger:
         logger.error(f"Download fallito per {url} dopo {max_retries} tentativi")
     

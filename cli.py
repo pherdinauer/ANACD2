@@ -338,10 +338,28 @@ class ANACDownloaderCLI:
         
         # Download files
         print("\nDownload in corso...")
+        print("DEBUG: Inizializzazione processo di download...")
         
         from json_downloader.downloader import download_file
         from urllib.parse import urlparse
         import platform
+        
+        # Log del sistema operativo per debug
+        system_info = platform.system()
+        print(f"DEBUG: Sistema operativo rilevato: {system_info}")
+        print(f"DEBUG: Percorso download: {self.config['download_dir']}")
+        print(f"DEBUG: Verifica permessi cartella download...")
+        
+        # Verifica permessi cartella download
+        try:
+            test_file = os.path.join(self.config['download_dir'], '.test_permissions')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            print("DEBUG: Permessi cartella download OK")
+        except Exception as perm_error:
+            print(f"DEBUG: ERRORE Permessi cartella download: {str(perm_error)}")
+            print("DEBUG: Tentativo di utilizzare directory alternative...")
         
         # Controlla il sistema operativo per gestire correttamente i percorsi
         is_windows = platform.system() == 'Windows'
@@ -349,15 +367,26 @@ class ANACDownloaderCLI:
         downloaded_files = []
         files_by_dataset = {}  # Per tenere traccia di quali file sono in quali dataset
         
+        # Log prima di iniziare il ciclo di download
+        print(f"DEBUG: Preparazione download di {len(links_to_download)} file...")
+        
         for i, link in enumerate(links_to_download, 1):
             try:
+                print(f"DEBUG: Elaborazione link {i}/{len(links_to_download)}: {link}")
+                
                 # Get filename from URL
                 file_name = os.path.basename(link.split('?')[0])
                 if not file_name:
                     file_name = f"download_{i}.dat"
+                    print(f"DEBUG: Nome file non trovato nell'URL, generato automaticamente: {file_name}")
+                else:
+                    print(f"DEBUG: Nome file estratto dall'URL: {file_name}")
                 
                 # Rimuovi caratteri non validi dal nome file
-                file_name = ''.join(c for c in file_name if c.isalnum() or c in '-_.') 
+                original_name = file_name
+                file_name = sanitize_filename(file_name)
+                if file_name != original_name:
+                    print(f"DEBUG: Nome file sanitizzato da '{original_name}' a '{file_name}'")
                 
                 # Determina il dataset dal link
                 dataset_name = "altri_file"  # Default folder
@@ -367,22 +396,31 @@ class ANACDownloaderCLI:
                     parsed_url = urlparse(link)
                     path_parts = parsed_url.path.strip('/').split('/')
                     
+                    print(f"DEBUG: Analisi percorso URL per dataset: {parsed_url.path}")
+                    
                     # Cerca la parte 'dataset' nell'URL
                     if 'dataset' in path_parts:
                         dataset_idx = path_parts.index('dataset')
                         if dataset_idx + 1 < len(path_parts):
                             dataset_name = path_parts[dataset_idx + 1]
+                            print(f"DEBUG: Dataset trovato nell'URL: {dataset_name}")
                     
                     # Se non riusciamo a estrarre il dataset dall'URL, usiamo il dominio
                     if dataset_name == "altri_file" and parsed_url.netloc:
                         dataset_name = parsed_url.netloc.replace('.', '_')
+                        print(f"DEBUG: Dataset non trovato, uso dominio: {dataset_name}")
                 
                 # Assicurati che il nome cartella sia valido
+                original_dataset_name = dataset_name
                 dataset_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in dataset_name)
+                if dataset_name != original_dataset_name:
+                    print(f"DEBUG: Nome dataset sanitizzato da '{original_dataset_name}' a '{dataset_name}'")
                 
                 # Full path with dataset subfolder
                 try:
                     dataset_folder = os.path.join(self.config['download_dir'], dataset_name)
+                    print(f"DEBUG: Tentativo creazione cartella dataset: {dataset_folder}")
+                    
                     try:
                         os.makedirs(dataset_folder, exist_ok=True)
                         # Verifica immediata dei permessi
@@ -390,8 +428,10 @@ class ANACDownloaderCLI:
                         with open(test_file, 'w') as f:
                             f.write('test')
                         os.remove(test_file)
+                        print(f"DEBUG: Cartella dataset creata con successo: {dataset_folder}")
                         print(f"Cartella creata/verificata: {dataset_folder} (permessi OK)")
                     except PermissionError as pe:
+                        print(f"DEBUG: ERRORE PERMESSI: {str(pe)}")
                         print(f"Errore di permessi nella cartella {dataset_folder}: {str(pe)}")
                         print("Tentativo di utilizzo della cartella principale...")
                         dataset_folder = self.config['download_dir']
@@ -401,24 +441,31 @@ class ANACDownloaderCLI:
                             with open(test_file, 'w') as f:
                                 f.write('test')
                             os.remove(test_file)
-                        except:
+                            print(f"DEBUG: Cartella principale utilizzabile: {dataset_folder}")
+                        except Exception as mpe:
                             # Se fallisce anche qui, usa la directory corrente
+                            print(f"DEBUG: ERRORE PERMESSI anche cartella principale: {str(mpe)}")
                             print("Errore di permessi anche nella cartella principale.")
                             dataset_folder = os.path.abspath('.')
+                            print(f"DEBUG: Uso directory corrente: {dataset_folder}")
                 except Exception as folder_error:
+                    print(f"DEBUG: ERRORE CREAZIONE CARTELLA: {str(folder_error)}")
                     print(f"Errore nella creazione della cartella {dataset_folder}: {str(folder_error)}")
-                    print("Utilizzo cartella principale per i download...")
+                    print("Utilizzo cartella principale per i downloads...")
                     dataset_folder = self.config['download_dir']
                     
                 # Verifica se la cartella esiste effettivamente dopo la creazione
                 if not os.path.exists(dataset_folder):
+                    print(f"DEBUG: Impossibile verificare esistenza cartella: {dataset_folder}")
                     print(f"Impossibile verificare la cartella {dataset_folder}. Utilizzo percorso alternativo.")
                     # Prova la directory di lavoro corrente come ultima risorsa
                     dataset_folder = os.path.abspath('.')
+                    print(f"DEBUG: Fallback a directory corrente: {dataset_folder}")
                     print(f"Usando directory corrente: {dataset_folder}")
                 
                 # Combina percorso cartella e nome file
                 file_path = os.path.join(dataset_folder, file_name)
+                print(f"DEBUG: Percorso file completo: {file_path}")
                 
                 # Aggiorna il dizionario dei file per dataset
                 if dataset_name not in files_by_dataset:
@@ -431,20 +478,28 @@ class ANACDownloaderCLI:
                 max_retries = 3  # Valore predefinito
                 if isinstance(self.config, dict) and 'max_retries' in self.config:
                     max_retries = self.config['max_retries']
+                    print(f"DEBUG: Utilizzando max_retries={max_retries} dalla configurazione")
+                else:
+                    print(f"DEBUG: Utilizzando max_retries={max_retries} predefinito")
                 
                 # Verifica se il file esiste già
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    print(f"DEBUG: File già esistente: {file_path} ({os.path.getsize(file_path)} bytes)")
                     overwrite = input(f"File {file_name} già esiste. Sovrascrivere? (s/n): ").strip().lower()
                     if overwrite != 's':
                         print(f"Download saltato per {file_name}.")
                         continue
+                    print("DEBUG: Sovrascrittura file confermata")
                 
+                print(f"DEBUG: Avvio download di {link} in {file_path}")
                 file_hash = download_file(
                     link, 
                     file_path, 
                     logger=self.logger, 
                     max_retries=max_retries
                 )
+                
+                print(f"DEBUG: Risultato download: hash={file_hash}")
                 
                 if file_hash:
                     downloaded_files.append(file_path)
