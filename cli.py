@@ -197,9 +197,32 @@ class ANACDownloaderCLI:
             
             print("Avvio dello scraping delle pagine ANAC...")
             
+            # Opzioni di scraping
+            use_thorough = input("Vuoi eseguire una ricerca approfondita? Ci vorrà più tempo ma troverà più dataset (s/n): ").strip().lower() == 's'
+            if use_thorough:
+                print("Modalità ricerca approfondita attivata.")
+                os.environ['ANAC_THOROUGH_SEARCH'] = '1'
+            else:
+                print("Modalità ricerca standard attivata.")
+                if 'ANAC_THOROUGH_SEARCH' in os.environ:
+                    del os.environ['ANAC_THOROUGH_SEARCH']
+            
+            # Impostazione timeout
+            try:
+                timeout = input("Specificare timeout per operazioni di navigazione (in secondi, default: 30): ").strip()
+                if timeout:
+                    self.config['timeout'] = int(timeout)
+                    print(f"Timeout impostato a {self.config['timeout']} secondi.")
+            except ValueError:
+                print("Valore non valido, uso il timeout predefinito.")
+            
+            print("\nAvvio scraping in corso...")
+            
             # Import and run the scraper
             from json_downloader.scraper import scrape_all_json_links
             
+            # Aggiunta feedback
+            print("Ricerca dataset principali...")
             new_links = scrape_all_json_links(self.config, self.logger)
             
             # Merge with existing links
@@ -213,6 +236,14 @@ class ANACDownloaderCLI:
             # Save to cache
             save_links_to_cache(self.json_links, self.links_cache_file)
             print(f"Link salvati nella cache: {self.links_cache_file}")
+            
+            # Mostra alcuni esempi di link trovati
+            if new_links:
+                print("\nEsempi di link trovati:")
+                for i, link in enumerate(list(new_links)[:5], 1):
+                    print(f"{i}. {link}")
+                if len(new_links) > 5:
+                    print(f"... e altri {len(new_links)-5} link.")
             
         except Exception as e:
             print(f"Errore durante lo scraping: {str(e)}")
@@ -230,8 +261,39 @@ class ANACDownloaderCLI:
         
         print(f"Sono disponibili {len(self.json_links)} link per il download.")
         
+        # Chiedi se organizzare in cartelle per dataset
+        organize_by_dataset = input("\nVuoi organizzare i file in cartelle per dataset? (s/n): ").strip().lower() == 's'
+        
+        # Chiedi se estrarre gli archivi zip
+        extract_zip = input("Vuoi estrarre automaticamente i file ZIP? (s/n): ").strip().lower() == 's'
+        
+        # Chiedi se filtrare solo i file JSON
+        filter_json_only = input("Vuoi scaricare solo file JSON e ZIP contenenti JSON? (s/n): ").strip().lower() == 's'
+        
+        if filter_json_only:
+            filtered_links = []
+            for link in self.json_links:
+                link_lower = link.lower()
+                # Mantieni i link che terminano con .json o _json o .json.zip o contengono /json/ nel percorso
+                # Esclude esplicitamente i file CSV, TTL e altri formati
+                if (link_lower.endswith('.json') or 
+                    link_lower.endswith('_json.zip') or 
+                    '/json/' in link_lower or 
+                    'format=json' in link_lower):
+                    filtered_links.append(link)
+                # Esclude esplicitamente link che sembrano CSV o TTL o XML
+                elif any(ext in link_lower for ext in ['_csv.', '.csv.', '_ttl.', '.ttl.', '_xml.', '.xml.']):
+                    continue
+                # Per ZIP generici, li include solo se non contengono indicazioni CSV/TTL/XML
+                elif link_lower.endswith('.zip') and not any(ext in link_lower for ext in ['_csv', '.csv', '_ttl', '.ttl', '_xml', '.xml']):
+                    filtered_links.append(link)
+            
+            original_count = len(self.json_links)
+            self.json_links = filtered_links
+            print(f"\nFiltrati {original_count - len(self.json_links)} link non-JSON. Rimasti {len(self.json_links)} link JSON/ZIP.")
+        
         # Ask how many files to download
-        max_files = int(input("Quanti file vuoi scaricare? (0 per tutti): "))
+        max_files = int(input("\nQuanti file vuoi scaricare? (0 per tutti): "))
         
         if max_files == 0:
             links_to_download = list(self.json_links)
@@ -250,6 +312,10 @@ class ANACDownloaderCLI:
         print("\nDownload in corso...")
         
         from json_downloader.downloader import download_file
+        from urllib.parse import urlparse
+        
+        downloaded_files = []
+        files_by_dataset = {}  # Per tenere traccia di quali file sono in quali dataset
         
         for i, link in enumerate(links_to_download, 1):
             try:
@@ -258,17 +324,59 @@ class ANACDownloaderCLI:
                 if not file_name:
                     file_name = f"download_{i}.dat"
                 
-                # Full path
-                file_path = os.path.join(self.config['download_dir'], file_name)
+                # Determina il dataset dal link
+                dataset_name = "altri_file"  # Default folder
+                
+                if organize_by_dataset:
+                    # Prova a estrarre il nome del dataset dall'URL
+                    parsed_url = urlparse(link)
+                    path_parts = parsed_url.path.strip('/').split('/')
+                    
+                    # Cerca la parte 'dataset' nell'URL
+                    if 'dataset' in path_parts:
+                        dataset_idx = path_parts.index('dataset')
+                        if dataset_idx + 1 < len(path_parts):
+                            dataset_name = path_parts[dataset_idx + 1]
+                    
+                    # Se non riusciamo a estrarre il dataset dall'URL, usiamo il dominio
+                    if dataset_name == "altri_file" and parsed_url.netloc:
+                        dataset_name = parsed_url.netloc.replace('.', '_')
+                
+                # Assicurati che il nome cartella sia valido
+                dataset_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in dataset_name)
+                
+                # Full path with dataset subfolder
+                dataset_folder = os.path.join(self.config['download_dir'], dataset_name)
+                os.makedirs(dataset_folder, exist_ok=True)
+                file_path = os.path.join(dataset_folder, file_name)
+                
+                # Aggiorna il dizionario dei file per dataset
+                if dataset_name not in files_by_dataset:
+                    files_by_dataset[dataset_name] = []
                 
                 print(f"\n[{i}/{len(links_to_download)}] Scaricamento di {file_name}...")
-                success, file_path = download_file(link, file_path, self.logger, self.config)
+                print(f"Cartella di destinazione: {dataset_folder}")
                 
-                if success:
+                # Estrai solo i parametri necessari dalla configurazione
+                max_retries = 3  # Valore predefinito
+                if isinstance(self.config, dict) and 'max_retries' in self.config:
+                    max_retries = self.config['max_retries']
+                
+                file_hash = download_file(
+                    link, 
+                    file_path, 
+                    logger=self.logger, 
+                    max_retries=max_retries
+                )
+                
+                if file_hash:
+                    downloaded_files.append(file_path)
+                    files_by_dataset[dataset_name].append(file_path)
                     print(f"Download completato: {file_path}")
+                    print(f"SHA256: {file_hash}")
                     
                     # If it's a ZIP file, extract JSON files
-                    if file_path.lower().endswith('.zip'):
+                    if file_path.lower().endswith('.zip') and extract_zip:
                         print("Estrazione dei file JSON dall'archivio ZIP...")
                         extract_dir = file_path[:-4]  # Remove .zip
                         from json_downloader.utils import extract_zip_files
@@ -276,13 +384,32 @@ class ANACDownloaderCLI:
                         
                         if extracted:
                             print(f"Estratti {len(extracted)} file da {file_name}")
+                            files_by_dataset[dataset_name].extend(extracted)
+                            for ext_file in extracted:
+                                print(f" - {os.path.basename(ext_file)}")
+                            downloaded_files.extend(extracted)
                         else:
                             print("Nessun file JSON trovato nell'archivio ZIP.")
+                    elif file_path.lower().endswith('.zip') and not extract_zip:
+                        print("File ZIP scaricato ma non estratto (come richiesto).")
                 else:
                     print(f"Errore durante il download di {link}")
             except Exception as e:
                 print(f"Errore durante il download: {str(e)}")
+                traceback.print_exc()
                 continue
+        
+        # Mostra il riepilogo organizzato per dataset
+        print("\nScaricamento completato.")
+        print(f"File scaricati con successo: {len(downloaded_files)}")
+        
+        if organize_by_dataset and files_by_dataset:
+            print("\nFiles organizzati per dataset:")
+            for dataset, files in files_by_dataset.items():
+                if files:
+                    print(f"\n- Dataset: {dataset}")
+                    print(f"  Cartella: {os.path.join(self.config['download_dir'], dataset)}")
+                    print(f"  File scaricati: {len(files)}")
         
         print("\nScaricamento completato.")
     
@@ -601,24 +728,36 @@ class ANACDownloaderCLI:
                 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
                 
                 # Esegui lo scraping con Playwright
+                print("\nAvvio browser per lo scraping...")
                 with sync_playwright() as p:
                     browser_options = {
                         'headless': not self.config.get('debug_mode', False)
                     }
+                    
+                    print("Inizializzazione browser Chrome...")
                     browser = p.chromium.launch(**browser_options)
                     
                     try:
+                        print("Creazione nuovo contesto...")
                         context = browser.new_context(
                             viewport={'width': 1280, 'height': 800},
                             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
                         )
                         page = context.new_page()
                         
-                        print(f"Navigazione a {dataset_url}...")
-                        response = page.goto(dataset_url, timeout=self.config['timeout']*1000, wait_until="networkidle")
+                        # Imposta un timeout più breve ma ragionevole
+                        navigation_timeout = min(self.config.get('timeout', 30), 60) * 1000  # Massimo 60 secondi
                         
-                        if not response or response.status >= 400:
-                            print(f"Errore: Impossibile accedere all'URL ({response.status if response else 'N/A'})")
+                        print(f"Navigazione a {dataset_url}... (timeout: {navigation_timeout/1000}s)")
+                        try:
+                            response = page.goto(dataset_url, timeout=navigation_timeout, wait_until="domcontentloaded")
+                        except TimeoutError:
+                            print("Timeout durante il caricamento iniziale. Provo a continuare comunque...")
+                            response = None
+                        
+                        if not response or (response and response.status >= 400):
+                            status_code = response.status if response else "N/A"
+                            print(f"Errore: Impossibile accedere all'URL (status: {status_code})")
                             if original_no_playwright:
                                 os.environ['NO_PLAYWRIGHT'] = original_no_playwright
                             
@@ -638,23 +777,42 @@ class ANACDownloaderCLI:
                             if not json_links:
                                 return
                         else:
-                            # Attendi caricamento dinamico
-                            page.wait_for_load_state("networkidle")
+                            # Attendi caricamento dinamico con un timeout ragionevole
+                            print("Pagina caricata. Attendo il caricamento completo...")
+                            try:
+                                page.wait_for_load_state("networkidle", timeout=navigation_timeout)
+                                print("Caricamento completato.")
+                            except PlaywrightTimeout:
+                                print("Timeout durante l'attesa del caricamento completo. Continuo comunque...")
                             
                             # Scorri pagina per attivare lazy loading
+                            print("Scorrimento pagina per attivare lazy loading...")
                             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            page.wait_for_timeout(1000)
+                            page.wait_for_timeout(2000)  # Attendi 2 secondi per il caricamento
                             
+                            print("Estrazione contenuto della pagina...")
                             content = page.content()
                             
                             # Estrai link ai file JSON/ZIP
+                            print("Ricerca link ai file JSON/ZIP...")
                             from json_downloader.scraper import extract_json_links_from_dataset_page
                             json_links = extract_json_links_from_dataset_page(content, self.config['base_url'], self.logger, self.config)
+                            print(f"Trovati {len(json_links)} link nella pagina.")
                             
                             # Se l'URL stesso è un link diretto a un file JSON/ZIP, aggiungiamolo
                             if dataset_url.lower().endswith(('.json', '.zip')):
                                 json_links.add(dataset_url)
                         
+                    except PlaywrightTimeout as e:
+                        print(f"Timeout durante lo scraping: {str(e)}")
+                        print("Provo a continuare con ciò che è stato caricato...")
+                        try:
+                            content = page.content()
+                            from json_downloader.scraper import extract_json_links_from_dataset_page
+                            json_links = extract_json_links_from_dataset_page(content, self.config['base_url'], self.logger, self.config)
+                            print(f"Trovati {len(json_links)} link nella pagina parziale.")
+                        except Exception as inner_e:
+                            print(f"Impossibile estrarre contenuto: {str(inner_e)}")
                     except Exception as e:
                         print(f"Errore durante lo scraping: {str(e)}")
                         traceback.print_exc()
@@ -664,6 +822,7 @@ class ANACDownloaderCLI:
                             print("L'URL sembra essere un link diretto a un file JSON/ZIP.")
                             json_links.add(dataset_url)
                     finally:
+                        print("Chiusura browser...")
                         browser.close()
                         # Ripristina lo stato originale di NO_PLAYWRIGHT
                         if original_no_playwright:
@@ -714,6 +873,37 @@ class ANACDownloaderCLI:
             print(f"\nTrovati {len(json_links)} file da scaricare:")
             for i, link in enumerate(json_links, 1):
                 print(f"{i}. {link}")
+            
+            # Chiedi se filtrare solo i file JSON
+            filter_json_only = input("\nVuoi scaricare solo file JSON e ZIP contenenti JSON? (s/n): ").strip().lower() == 's'
+            
+            if filter_json_only:
+                filtered_links = set()
+                for link in json_links:
+                    link_lower = link.lower()
+                    # Mantieni i link che terminano con .json o _json o .json.zip o contengono /json/ nel percorso
+                    # Esclude esplicitamente i file CSV, TTL e altri formati
+                    if (link_lower.endswith('.json') or 
+                        link_lower.endswith('_json.zip') or 
+                        '/json/' in link_lower or 
+                        'format=json' in link_lower):
+                        filtered_links.add(link)
+                    # Esclude esplicitamente link che sembrano CSV o TTL o XML
+                    elif any(ext in link_lower for ext in ['_csv.', '.csv.', '_ttl.', '.ttl.', '_xml.', '.xml.']):
+                        continue
+                    # Per ZIP generici, li include solo se non contengono indicazioni CSV/TTL/XML
+                    elif link_lower.endswith('.zip') and not any(ext in link_lower for ext in ['_csv', '.csv', '_ttl', '.ttl', '_xml', '.xml']):
+                        filtered_links.add(link)
+                
+                original_count = len(json_links)
+                json_links = filtered_links
+                print(f"\nFiltrati {original_count - len(json_links)} link non-JSON. Rimasti {len(json_links)} link JSON/ZIP.")
+                
+                # Mostra i link filtrati
+                if json_links:
+                    print("\nFile da scaricare (dopo filtro):")
+                    for i, link in enumerate(json_links, 1):
+                        print(f"{i}. {link}")
             
             # Chiedi conferma prima di scaricare
             if json_links:

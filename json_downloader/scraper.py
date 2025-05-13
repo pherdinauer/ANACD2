@@ -66,6 +66,14 @@ def extract_dataset_links(page_content, base_url, logger=None):
 def extract_json_links_from_dataset_page(page_content, base_url, logger=None, config=None):
     """Estrae link a file JSON e ZIP che contengono JSON dalla pagina di dettaglio del dataset."""
     from bs4 import BeautifulSoup
+    import time
+    
+    # Inizio timestamp per misurare il tempo di elaborazione
+    start_time = time.time()
+    
+    if logger:
+        logger.info("Inizio estrazione link da pagina dataset...")
+    print("Analisi della pagina alla ricerca di link di download...")
     
     # Impostazioni predefinite se config non è specificato
     if not config:
@@ -75,10 +83,29 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
     exclude_formats = config.get('exclude_formats', ['ttl', 'csv', 'xml'])
     
     soup = BeautifulSoup(page_content, 'html.parser')
-    links = []
+    links = set()  # Uso un set per evitare link duplicati
     found_links_info = {}  # Per tenere traccia dei link trovati e del loro contesto
     
+    # Verifica se la pagina contiene contenuti validi
+    if len(page_content) < 100:
+        if logger:
+            logger.warning(f"Contenuto pagina troppo breve: {len(page_content)} caratteri. Possibile errore nel caricamento.")
+        print(f"Contenuto pagina sospetto (solo {len(page_content)} caratteri). Possibile errore.")
+        
+    if not soup.find('body'):
+        if logger:
+            logger.warning("Nessun elemento <body> trovato nella pagina. HTML non valido.")
+        print("Struttura pagina non valida. HTML incompleto.")
+    
+    # Statistiche per il debug
+    total_links = len(soup.find_all('a', href=True))
+    if logger:
+        logger.debug(f"Trovati {total_links} link totali nella pagina")
+    print(f"Trovati {total_links} link totali nella pagina")
+    
     # 1. RICERCA AVANZATA DI LINK PER ATTRIBUTI E CLASSI SPECIFICHE
+    print("Ricerca link tramite attributi e classi specifiche...")
+    
     # Cerca tutti i link che potrebbero contenere risorse di dati
     data_elements = [
         # I più comuni contenitori di link di risorse
@@ -94,7 +121,11 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
         # Contenitori di risorse
         soup.select('.resources a'),  # Link all'interno di div con classe resources
         soup.select('.resource-item a'),  # Link all'interno di elementi resource-item
-        soup.select('.dataset-resources a')  # Link all'interno di elementi dataset-resources
+        soup.select('.dataset-resources a'),  # Link all'interno di elementi dataset-resources
+        
+        # Ricerca più ampia per i portali CKAN standard
+        soup.select('[data-module="resource-view"] a'),
+        soup.select('.resource-actions a')
     ]
     
     # Appiattisci l'elenco di tutti gli elementi e rimuovi duplicati
@@ -105,8 +136,11 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
                 data_elements_flat.add(element)
     
     # 2. RICERCA PER CONTENUTO TESTUALE
+    print("Ricerca link tramite contenuto testuale...")
+    
     # Cerca link con testo specifico che suggerisce un download
-    download_texts = ['vai alla risorsa', 'download', 'scarica', 'json', 'zip', 'apri', 'dati', 'open data']
+    download_texts = ['vai alla risorsa', 'download', 'scarica', 'json', 'zip', 'apri', 'dati', 'open data', 
+                    'dataset', 'risorsa', 'file', 'export', 'esporta']
     text_elements = soup.find_all('a', href=True)
     
     for a in text_elements:
@@ -116,8 +150,17 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
         if any(text in link_text for text in download_texts):
             data_elements_flat.add(a)
     
+    print(f"Trovati {len(data_elements_flat)} link potenziali tramite ricerca mirata")
+    if logger:
+        logger.debug(f"Trovati {len(data_elements_flat)} link potenziali da analizzare")
+    
     # 3. ANALISI DI TUTTI I LINK TROVATI
+    print("Analisi dettagliata dei link trovati...")
+    analyzed_count = 0
+    valid_count = 0
+    
     for element in data_elements_flat:
+        analyzed_count += 1
         href = element.get('href')
         if not href:
             continue
@@ -136,13 +179,26 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
             '/filesystem/' in href_lower or
             '/resource/' in href_lower or
             'format=json' in href_lower or
+            'api/action/datastore_search' in href_lower or  # API CKAN
             any(fmt in href_lower for fmt in include_formats)
         )
         
+        # Seconda verifica per URL ambigui
         if not is_valid_link:
-            # Ultima chance: controlla se il testo suggerisce un download di JSON/ZIP
-            if not ('json' in element_text or 'zip' in element_text or 'download' in element_text):
-                continue
+            # Ultima chance: controlla il testo o attributi specifici
+            if 'json' in element_text or 'zip' in element_text or 'download' in element_text:
+                is_valid_link = True
+                if logger:
+                    logger.debug(f"Link accettato tramite testo: {href} (testo: {element_text})")
+            
+            # Attributo data-format (comune in CKAN)
+            if element.get('data-format') and element.get('data-format').lower() in include_formats:
+                is_valid_link = True
+        
+        if not is_valid_link:
+            continue
+        
+        valid_count += 1
         
         # Normalizza URL
         full_url = href
@@ -153,12 +209,20 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
             else:
                 full_url = urljoin(base_url, href)
         
+        # Rimuovi parametri di tracking o sessione non necessari
+        # Mantieni solo parametri essenziali come 'id', 'resource_id', 'format'
+        parsed_url = urlparse(full_url)
+        path = parsed_url.path
+        
+        # Ripulisci l'URL se necessario
+        clean_url = full_url
+        
         # Aggiungi il link solo se non è già stato trovato
-        if full_url not in links:
-            links.append(full_url)
+        if clean_url not in links:
+            links.add(clean_url)
             
             # Memorizza informazioni sul link per il log
-            found_links_info[full_url] = {
+            found_links_info[clean_url] = {
                 'text': element_text if element_text else 'N/A',
                 'filename': href.split('/')[-1] if '/' in href else href,
                 'context': 'formato esplicito' if any(fmt in href_lower for fmt in include_formats) else 'potenziale risorsa'
@@ -166,21 +230,18 @@ def extract_json_links_from_dataset_page(page_content, base_url, logger=None, co
             
             if logger:
                 file_type = "ZIP" if ".zip" in href_lower else "JSON" if ".json" in href_lower else "Risorsa"
-                logger.info(f"Trovato link {file_type}: {full_url} (testo: {element_text[:30]}...)")
+                logger.info(f"Trovato link {file_type}: {clean_url} (testo: {element_text[:30]}...)")
+            print(f"Trovato: {clean_url}")
     
     # 4. ELABORAZIONE FINALE E LOGGING
+    elapsed_time = time.time() - start_time
+    
     if logger:
-        logger.info(f"Estratti {len(links)} link potenziali JSON/ZIP dalla pagina dataset")
+        logger.info(f"Estratti {len(links)} link JSON/ZIP dalla pagina dataset in {elapsed_time:.2f} secondi")
+        logger.debug(f"Statistiche: {analyzed_count} link analizzati, {valid_count} considerati validi")
         
-        # Log dettagliato dei link trovati
-        if links:
-            logger.debug("Dettaglio dei link trovati:")
-            for i, link in enumerate(links, 1):
-                info = found_links_info.get(link, {})
-                logger.debug(f"  {i}. {link}")
-                logger.debug(f"     - Testo: {info.get('text', 'N/A')}")
-                logger.debug(f"     - File: {info.get('filename', 'N/A')}")
-                logger.debug(f"     - Tipo: {info.get('context', 'N/A')}")
+    print(f"Completata analisi in {elapsed_time:.2f} secondi")
+    print(f"Risultato: {len(links)} link JSON/ZIP identificati su {analyzed_count} analizzati")
     
     return links
 
