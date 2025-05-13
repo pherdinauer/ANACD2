@@ -293,7 +293,12 @@ class ANACDownloaderCLI:
             print(f"\nFiltrati {original_count - len(self.json_links)} link non-JSON. Rimasti {len(self.json_links)} link JSON/ZIP.")
         
         # Ask how many files to download
-        max_files = int(input("\nQuanti file vuoi scaricare? (0 per tutti): "))
+        max_files_input = input("\nQuanti file vuoi scaricare? (0 per tutti, invio = tutti): ").strip()
+        try:
+            max_files = 0 if not max_files_input else int(max_files_input)
+        except ValueError:
+            print("Input non valido. Verranno scaricati tutti i file.")
+            max_files = 0
         
         if max_files == 0:
             links_to_download = list(self.json_links)
@@ -313,6 +318,10 @@ class ANACDownloaderCLI:
         
         from json_downloader.downloader import download_file
         from urllib.parse import urlparse
+        import platform
+        
+        # Controlla il sistema operativo per gestire correttamente i percorsi
+        is_windows = platform.system() == 'Windows'
         
         downloaded_files = []
         files_by_dataset = {}  # Per tenere traccia di quali file sono in quali dataset
@@ -323,6 +332,9 @@ class ANACDownloaderCLI:
                 file_name = os.path.basename(link.split('?')[0])
                 if not file_name:
                     file_name = f"download_{i}.dat"
+                
+                # Rimuovi caratteri non validi dal nome file
+                file_name = ''.join(c for c in file_name if c.isalnum() or c in '-_.') 
                 
                 # Determina il dataset dal link
                 dataset_name = "altri_file"  # Default folder
@@ -346,8 +358,21 @@ class ANACDownloaderCLI:
                 dataset_name = ''.join(c if c.isalnum() or c in '-_' else '_' for c in dataset_name)
                 
                 # Full path with dataset subfolder
-                dataset_folder = os.path.join(self.config['download_dir'], dataset_name)
-                os.makedirs(dataset_folder, exist_ok=True)
+                try:
+                    dataset_folder = os.path.join(self.config['download_dir'], dataset_name)
+                    os.makedirs(dataset_folder, exist_ok=True)
+                    print(f"Cartella creata/verificata: {dataset_folder}")
+                except Exception as folder_error:
+                    print(f"Errore nella creazione della cartella {dataset_folder}: {str(folder_error)}")
+                    print("Utilizzo cartella principale per i download...")
+                    dataset_folder = self.config['download_dir']
+                    
+                # Verifica se la cartella esiste effettivamente dopo la creazione
+                if not os.path.exists(dataset_folder):
+                    print(f"Impossibile verificare la cartella {dataset_folder}. Utilizzo percorso alternativo.")
+                    dataset_folder = os.path.abspath('.')  # Usa la directory corrente
+                
+                # Combina percorso cartella e nome file
                 file_path = os.path.join(dataset_folder, file_name)
                 
                 # Aggiorna il dizionario dei file per dataset
@@ -361,6 +386,13 @@ class ANACDownloaderCLI:
                 max_retries = 3  # Valore predefinito
                 if isinstance(self.config, dict) and 'max_retries' in self.config:
                     max_retries = self.config['max_retries']
+                
+                # Verifica se il file esiste già
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    overwrite = input(f"File {file_name} già esiste. Sovrascrivere? (s/n): ").strip().lower()
+                    if overwrite != 's':
+                        print(f"Download saltato per {file_name}.")
+                        continue
                 
                 file_hash = download_file(
                     link, 
@@ -379,17 +411,24 @@ class ANACDownloaderCLI:
                     if file_path.lower().endswith('.zip') and extract_zip:
                         print("Estrazione dei file JSON dall'archivio ZIP...")
                         extract_dir = file_path[:-4]  # Remove .zip
-                        from json_downloader.utils import extract_zip_files
-                        extracted = extract_zip_files(file_path, extract_dir, self.logger)
-                        
-                        if extracted:
-                            print(f"Estratti {len(extracted)} file da {file_name}")
-                            files_by_dataset[dataset_name].extend(extracted)
-                            for ext_file in extracted:
-                                print(f" - {os.path.basename(ext_file)}")
-                            downloaded_files.extend(extracted)
-                        else:
-                            print("Nessun file JSON trovato nell'archivio ZIP.")
+                        try:
+                            os.makedirs(extract_dir, exist_ok=True)
+                            print(f"Cartella di estrazione creata: {extract_dir}")
+                            
+                            from json_downloader.utils import extract_zip_files
+                            extracted = extract_zip_files(file_path, extract_dir, self.logger)
+                            
+                            if extracted:
+                                print(f"Estratti {len(extracted)} file da {file_name}")
+                                files_by_dataset[dataset_name].extend(extracted)
+                                for ext_file in extracted:
+                                    print(f" - {os.path.basename(ext_file)}")
+                                downloaded_files.extend(extracted)
+                            else:
+                                print("Nessun file JSON trovato nell'archivio ZIP.")
+                        except Exception as extract_error:
+                            print(f"Errore durante l'estrazione: {str(extract_error)}")
+                            print("L'estrazione verrà saltata.")
                     elif file_path.lower().endswith('.zip') and not extract_zip:
                         print("File ZIP scaricato ma non estratto (come richiesto).")
                 else:
@@ -956,7 +995,7 @@ class ANACDownloaderCLI:
                                 extracted = extract_zip_files(file_path, extract_dir, self.logger)
                                 
                                 if extracted:
-                                    print(f"Estratti {len(extracted)} file da {file_name}:")
+                                    print(f"Estratti {len(extracted)} file da {file_name}")
                                     for ext_file in extracted:
                                         print(f" - {os.path.basename(ext_file)}")
                                     downloaded_files.extend(extracted)
