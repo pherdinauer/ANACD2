@@ -28,6 +28,18 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
     dest_path = os.path.abspath(os.path.expanduser(dest_path))
     print(f"DEBUG_DOWN: Percorso normalizzato: {dest_path}")
     
+    # Verifica se il file esiste già
+    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+        print(f"DEBUG_DOWN: File già esistente con dimensione di {os.path.getsize(dest_path)} bytes")
+        # Calcola l'hash del file esistente e ritornalo
+        file_hash = calculate_file_hash(dest_path, logger)
+        if file_hash:
+            if logger:
+                logger.info(f"File {dest_path} esiste già. Saltato. Hash={file_hash}")
+            if show_progress:
+                print(f"File già esistente. Hash SHA256: {file_hash}")
+            return file_hash
+    
     # Crea la directory di destinazione se non esiste
     dest_dir = os.path.dirname(dest_path)
     print(f"DEBUG_DOWN: Verifica directory: {dest_dir}")
@@ -100,6 +112,8 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 resume_size = os.path.getsize(dest_path)
                 print(f"DEBUG_DOWN: File esistente, size={resume_size} bytes")
+                # Nota: la verifica del file completo basata sul content-length è ancora utile
+                # in caso il file sia stato parzialmente scaricato precedentemente
                 if content_length and resume_size >= content_length:
                     # File già completo
                     print(f"DEBUG_DOWN: File già completo")
@@ -107,6 +121,7 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
                         logger.info(f"File {dest_path} già scaricato completamente")
                     return calculate_file_hash(dest_path, logger)
                 
+                # Altrimenti continuiamo con la ripresa del download
                 resume_header = {'Range': f'bytes={resume_size}-'}
                 print(f"DEBUG_DOWN: Riprendo download da {resume_size} bytes")
                 if show_progress:
@@ -325,22 +340,43 @@ def verify_file_integrity(file_path, expected_hash=None):
     return True
 
 def should_download(dest_path, expected_hash=None, force=False):
+    """
+    Determina se un file deve essere scaricato.
+    
+    Args:
+        dest_path: Percorso di destinazione del file
+        expected_hash: Hash SHA256 atteso del file (se noto)
+        force: Se True, forza il download anche se il file esiste
+        
+    Returns:
+        bool: True se il file deve essere scaricato, False altrimenti
+    """
+    # Forza il download se richiesto
     if force:
         return True
         
+    # Il file non esiste, deve essere scaricato
     if not file_exists(dest_path):
         return True
+    
+    # Il file esiste ma è vuoto, deve essere scaricato
+    if os.path.getsize(dest_path) == 0:
+        return True
         
+    # Se abbiamo un hash atteso, verifica che corrisponda
     if expected_hash:
         from utils import sha256sum
         try:
-            return sha256sum(dest_path) != expected_hash
-        except:
+            actual_hash = sha256sum(dest_path)
+            return actual_hash != expected_hash
+        except Exception as e:
             # Se c'è un errore nel calcolo dell'hash, meglio scaricare di nuovo
+            print(f"Errore nel calcolo hash: {str(e)}. Eseguo nuovo download.")
             return True
-            
-    # Se il file esiste e non c'è un hash di riferimento, verifica che non sia vuoto
-    return os.path.getsize(dest_path) == 0
+    
+    # Il file esiste, non è vuoto e non abbiamo un hash di riferimento
+    # Non scaricare nuovamente (questo è il cambiamento principale)
+    return False
 
 def process_downloaded_file(file_path, extract_dir=None, logger=None, config=None):
     """Processa un file scaricato, estraendo il contenuto se è un ZIP."""

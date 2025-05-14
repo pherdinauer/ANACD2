@@ -485,11 +485,9 @@ class ANACDownloaderCLI:
                 # Verifica se il file esiste già
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                     print(f"DEBUG: File già esistente: {file_path} ({os.path.getsize(file_path)} bytes)")
-                    overwrite = input(f"File {file_name} già esiste. Sovrascrivere? (s/n): ").strip().lower()
-                    if overwrite != 's':
-                        print(f"Download saltato per {file_name}.")
-                        continue
-                    print("DEBUG: Sovrascrittura file confermata")
+                    # Non chiediamo più conferma, saltiamo automaticamente
+                    print(f"File {file_name} già esiste. Download saltato automaticamente.")
+                    continue
                 
                 print(f"DEBUG: Avvio download di {link} in {file_path}")
                 file_hash = download_file(
@@ -1064,6 +1062,11 @@ class ANACDownloaderCLI:
                     # Percorso completo del file
                     file_path = os.path.join(dataset_folder, file_name)
                     
+                    # Verifica se il file esiste già
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        print(f"File {file_name} già esiste. Download saltato automaticamente.")
+                        continue
+                    
                     # Scarica il file
                     print(f"\nScaricamento di {file_name}...")
                     try:
@@ -1197,6 +1200,21 @@ class ANACDownloaderCLI:
         
         # Path completo del file
         file_path = os.path.join(download_folder, file_name)
+        
+        # Verifica se il file esiste già
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            print(f"File {file_name} già esiste. Download saltato automaticamente.")
+            
+            # Chiedi se aggiungere il link alla cache anche se saltato
+            add_to_cache = input("\nVuoi aggiungere questo link alla cache per futuri download? (s/n): ").strip().lower()
+            if add_to_cache == 's':
+                if custom_link not in self.json_links:
+                    self.json_links.add(custom_link)
+                    save_links_to_cache(self.json_links, self.links_cache_file)
+                    print("Link aggiunto alla cache.")
+                else:
+                    print("Il link era già presente nella cache.")
+            return
         
         # Scarica il file
         print(f"\nScaricamento di {file_name} in corso...")
