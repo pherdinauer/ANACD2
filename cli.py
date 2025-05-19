@@ -125,6 +125,7 @@ class ANACDownloaderCLI:
             print(f"{start_choice+6}. Gestisci dataset e link diretti noti")
             print(f"{start_choice+7}. Scarica file JSON/ZIP da un URL dataset specifico")
             print(f"{start_choice+8}. Scarica direttamente da un link personalizzato")
+            print(f"{start_choice+9}. Estrai tutti i file ZIP in /database")
             print("0. Esci dal programma")
             
             try:
@@ -171,6 +172,8 @@ class ANACDownloaderCLI:
                     self.download_from_specific_dataset()
                 elif choice == '9':
                     self.download_from_custom_link()
+                elif choice == '10':
+                    self.extract_all_zips_to_database()
                 else:
                     print("Scelta non valida. Riprova.")
             else:
@@ -195,6 +198,8 @@ class ANACDownloaderCLI:
                     self.download_from_specific_dataset()
                 elif choice == '10':
                     self.download_from_custom_link()
+                elif choice == '11':
+                    self.extract_all_zips_to_database()
                 else:
                     print("Scelta non valida. Riprova.")
                     
@@ -1268,6 +1273,88 @@ class ANACDownloaderCLI:
         except Exception as e:
             print(f"Errore durante il download: {str(e)}")
             traceback.print_exc()
+
+    def extract_all_zips_to_database(self):
+        """Scansiona tutte le cartelle di download ed estrae i file ZIP in /database/JSON."""
+        print("\n" + "=" * 60)
+        print("ESTRAZIONE FILE ZIP IN /database/JSON")
+        print("=" * 60)
+        
+        # Verifica che il mount point /database esista
+        database_dir = "/database"
+        if not os.path.exists(database_dir):
+            print(f"Errore: Il mount point {database_dir} non esiste o non è accessibile.")
+            return
+            
+        # Crea la sottocartella JSON se non esiste
+        json_dir = os.path.join(database_dir, "JSON")
+        try:
+            os.makedirs(json_dir, exist_ok=True)
+            print(f"Directory JSON creata/verificata: {json_dir}")
+        except Exception as e:
+            print(f"Errore nella creazione della directory JSON: {str(e)}")
+            return
+        
+        # Verifica che la directory di download esista
+        if not os.path.exists(self.config['download_dir']):
+            print(f"Directory di download non trovata: {self.config['download_dir']}")
+            return
+        
+        # Cerca tutti i file ZIP ricorsivamente
+        zip_files = []
+        for root, _, files in os.walk(self.config['download_dir']):
+            for file in files:
+                if file.lower().endswith('.zip'):
+                    zip_files.append(os.path.join(root, file))
+        
+        if not zip_files:
+            print("Nessun file ZIP trovato nelle directory di download.")
+            return
+        
+        print(f"\nTrovati {len(zip_files)} file ZIP da estrarre.")
+        
+        # Chiedi conferma
+        confirm = input("\nVuoi procedere con l'estrazione? (s/n): ").strip().lower()
+        if confirm != 's':
+            print("Estrazione annullata.")
+            return
+        
+        # Estrai i file
+        extracted_count = 0
+        error_count = 0
+        
+        for i, zip_path in enumerate(zip_files, 1):
+            try:
+                print(f"\n[{i}/{len(zip_files)}] Estrazione di {os.path.basename(zip_path)}...")
+                
+                # Crea una sottocartella in /database/JSON con il nome del file ZIP (senza estensione)
+                zip_name = os.path.splitext(os.path.basename(zip_path))[0]
+                extract_dir = os.path.join(json_dir, zip_name)
+                os.makedirs(extract_dir, exist_ok=True)
+                
+                # Estrai i file
+                from json_downloader.utils import extract_zip_files
+                extracted = extract_zip_files(zip_path, extract_dir, self.logger)
+                
+                if extracted:
+                    print(f"✓ Estratti {len(extracted)} file in {extract_dir}")
+                    extracted_count += len(extracted)
+                else:
+                    print("! Nessun file estratto (possibilmente nessun file JSON trovato)")
+                
+            except Exception as e:
+                print(f"✗ Errore durante l'estrazione: {str(e)}")
+                error_count += 1
+                if self.logger:
+                    self.logger.error(f"Errore durante l'estrazione di {zip_path}: {str(e)}")
+        
+        # Mostra riepilogo
+        print("\n" + "=" * 60)
+        print("ESTRAZIONE COMPLETATA")
+        print("=" * 60)
+        print(f"✓ File estratti con successo: {extracted_count}")
+        print(f"✗ Errori durante l'estrazione: {error_count}")
+        print(f"📁 Directory di destinazione: {json_dir}")
 
     def run(self):
         """Run the CLI interface."""
