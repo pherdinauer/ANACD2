@@ -5,9 +5,14 @@ import json
 import time
 import requests
 from datetime import datetime
-from scraper import load_config, scrape_all_json_links
-from downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
-from utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache, deduplicate_links, format_size, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
+try:
+    from .scraper import load_config, scrape_all_json_links
+    from .downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
+    from .utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache, deduplicate_links, format_size, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
+except ImportError:
+    from scraper import load_config, scrape_all_json_links
+    from downloader import download_file, should_download, verify_file_integrity, process_downloaded_file
+    from utils import setup_logger, ensure_dir, normalize_url, sanitize_filename, save_links_to_cache, load_links_from_cache, deduplicate_links, format_size, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
 import traceback
 
 class ANACDownloaderCLI:

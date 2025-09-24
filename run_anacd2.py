@@ -33,23 +33,21 @@ def run_cli():
     """Run the CLI interface."""
     try:
         # First try importing as a package
-        try:
-            from json_downloader.cli import ANACDownloaderCLI
-            cli = ANACDownloaderCLI()
-            cli.run()
-        except ImportError:
-            # Fallback to direct import
-            from cli import ANACDownloaderCLI
-            cli = ANACDownloaderCLI()
-            cli.run()
+        from json_downloader.cli import ANACDownloaderCLI
+        cli = ANACDownloaderCLI()
+        cli.run()
     except ImportError as e:
         print(f"Errore di importazione: {e}")
         traceback.print_exc()
         print("\nProva a installare le dipendenze con:")
         print("pip install -r requirements.txt")
+        print("\nOppure esegui il fix:")
+        print("python3 fix_config.py")
     except Exception as e:
         print(f"Errore durante l'esecuzione: {e}")
         traceback.print_exc()
+        print("\nProva a eseguire il fix:")
+        print("python3 fix_config.py")
 
 if __name__ == "__main__":
     print("=" * 60)
