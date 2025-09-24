@@ -73,7 +73,7 @@ def install_dependencies():
     if os.path.exists('/etc/debian_version'):
         # Debian/Ubuntu
         packages = ['python3', 'python3-pip', 'python3-venv', 'git', 'tmux']
-        cmd = ['sudo', 'apt', 'update'] + ['sudo', 'apt', 'install', '-y'] + packages
+        # cmd sarà gestito separatamente per Debian/Ubuntu
     elif os.path.exists('/etc/redhat-release'):
         # Red Hat/CentOS/Fedora
         packages = ['python3', 'python3-pip', 'git', 'tmux']
@@ -89,7 +89,18 @@ def install_dependencies():
     
     try:
         print_colored("Esecuzione comando di installazione...", Colors.BLUE)
-        subprocess.run(cmd, check=True)
+        
+        # Per Debian/Ubuntu, esegui prima apt update, poi apt install
+        if os.path.exists('/etc/debian_version'):
+            # Prima aggiorna
+            subprocess.run(['sudo', 'apt', 'update'], check=True)
+            # Poi installa
+            install_cmd = ['sudo', 'apt', 'install', '-y'] + packages
+            subprocess.run(install_cmd, check=True)
+        else:
+            # Per altre distribuzioni, usa il comando normale
+            subprocess.run(cmd, check=True)
+            
         print_colored("✓ Dipendenze installate", Colors.GREEN)
         return True
     except subprocess.CalledProcessError:

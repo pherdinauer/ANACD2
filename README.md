@@ -23,31 +23,56 @@ Utility per il download di file JSON dal portale Open Data dell'Autorità Nazion
 
 ## Installazione su Linux
 
-### Metodo automatico (consigliato)
+### Opzione 1: Git Clone (Consigliato)
 
-1. **Setup iniziale sul server**:
-   ```bash
-   # Copia il file sul server e rendilo eseguibile
-   chmod +x server_setup.sh
-   ./server_setup.sh
-   ```
+```bash
+# Sul server
+git clone <repository-url>
+cd anac-downloader
+chmod +x server_setup.sh
+./server_setup.sh
+```
 
-2. **Avvio dell'applicazione**:
-   ```bash
-   # Avvio semplice
-   chmod +x start.sh
-   ./start.sh
-   
-   # Oppure usa il manager completo
-   python3 anac_manager.py
-   ```
+### Opzione 2: One Click Setup
 
-3. **Manager completo** (opzionale):
-   ```bash
-   python3 anac_manager.py
-   ```
-   
-   Il manager offre un menu interattivo con:
+```bash
+# Copia solo questo file sul server
+scp one_click_setup.sh user@tuo-server:/path/to/
+
+# Sul server - Setup automatico completo
+chmod +x one_click_setup.sh
+./one_click_setup.sh
+```
+
+### Opzione 3: Minimal Setup
+
+```bash
+# Copia solo questo file sul server
+scp minimal_setup.sh user@tuo-server:/path/to/
+
+# Sul server - Setup minimo
+chmod +x minimal_setup.sh
+./minimal_setup.sh
+```
+
+### Avvio dell'Applicazione
+
+```bash
+# Avvio semplice
+chmod +x start.sh
+./start.sh
+
+# Oppure usa il manager completo
+python3 anac_manager.py
+```
+
+### Manager Completo (Opzionale)
+
+```bash
+python3 anac_manager.py
+```
+
+Il manager offre un menu interattivo con:
    - 🚀 Deployment completo
    - 🔄 Aggiorna progetto
    - ▶️ Avvia applicazione
