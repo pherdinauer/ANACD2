@@ -1,0 +1,21 @@
+{
+  "base_url": "https://dati.anticorruzione.it/opendata/dataset",
+  "download_dir": "downloads",
+  "timeout": 90,
+  "max_retries": 8,
+  "retry_backoff": 2,
+  "chunk_size": 1048576,
+  "log_file": "log/downloader.log",
+  "max_pages": 30,
+  "max_page_retries": 5,
+  "debug_mode": false,
+  "save_report": true,
+  "use_session_folders": true,
+  "include_formats": ["json"],
+  "exclude_formats": ["ttl", "csv", "xml"],
+  "extract_json_only": true,
+  "extract_zip_files": false,
+  "database_path": "/database/JSON",
+  "auto_sorting": true,
+  "check_existing_files": true
+}

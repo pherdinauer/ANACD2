@@ -1,0 +1,23 @@
+[Unit]
+Description=ANAC JSON Downloader Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=anac
+Group=anac
+WorkingDirectory=/opt/anac-downloader
+Environment=PATH=/opt/anac-downloader/venv/bin
+ExecStart=/opt/anac-downloader/venv/bin/python /opt/anac-downloader/run_anacd2.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Configurazione per il mount point /database
+ExecStartPre=/bin/mkdir -p /database/JSON
+ExecStartPre=/bin/chown anac:anac /database/JSON
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,9 @@ Utility per il download di file JSON dal portale Open Data dell'Autorità Nazion
 - Interfaccia a riga di comando completa
 - Modalità di ricerca approfondita per identificare tutti i dataset
 - Download diretto da URL di dataset specifici
+- **NUOVO**: Verifica file esistenti in /database/JSON per evitare riscaricamenti
+- **NUOVO**: Smistamento automatico dei file nelle cartelle appropriate
+- **NUOVO**: Script di deployment e aggiornamento automatico per Linux
 
 ## Requisiti di sistema
 
@@ -22,25 +25,34 @@ Utility per il download di file JSON dal portale Open Data dell'Autorità Nazion
 
 ### Metodo automatico (consigliato)
 
-1. Rendere eseguibile lo script di deployment:
+1. **Setup iniziale sul server**:
    ```bash
-   chmod +x deploy_anac.sh
+   # Copia il file sul server e rendilo eseguibile
+   chmod +x server_setup.sh
+   ./server_setup.sh
    ```
 
-2. Eseguire lo script di deployment:
+2. **Avvio dell'applicazione**:
    ```bash
-   ./deploy_anac.sh
+   # Avvio semplice
+   chmod +x start.sh
+   ./start.sh
+   
+   # Oppure usa il manager completo
+   python3 anac_manager.py
    ```
 
-3. Avviare l'applicazione:
+3. **Manager completo** (opzionale):
    ```bash
-   ./start_anac.sh
+   python3 anac_manager.py
    ```
-
-   Per una ricerca approfondita di tutti i dataset disponibili:
-   ```bash
-   ./start_anac.sh --thorough
-   ```
+   
+   Il manager offre un menu interattivo con:
+   - 🚀 Deployment completo
+   - 🔄 Aggiorna progetto
+   - ▶️ Avvia applicazione
+   - 📊 Mostra stato sistema
+   - 🧪 Test installazione
 
 ### Metodo manuale
 
@@ -117,6 +129,9 @@ L'applicazione mostra un menu interattivo con le seguenti opzioni:
 6. **Deduplicazione avanzata dei link** - Rimuovi link duplicati dalla cache
 7. **Gestisci dataset e link diretti noti** - Gestisci l'elenco dei dataset e link conosciuti
 8. **Scarica file JSON/ZIP da un URL dataset specifico** - Inserisci un URL di dataset ANAC e scarica i file JSON/ZIP in una cartella dedicata
+9. **Scarica direttamente da un link personalizzato** - Download diretto da un link personalizzato
+10. **Estrai tutti i file ZIP in /database** - Estrae tutti i file ZIP scaricati nella directory /database/JSON
+11. **Download con smistamento automatico in /database/JSON** - **NUOVO**: Scarica e smista automaticamente i file nelle cartelle appropriate
 0. **Esci dal programma**
 
 In modalità approfondita, sarà disponibile anche l'opzione:
@@ -131,6 +146,28 @@ La funzionalità di download da URL dataset specifico permette di:
 4. Estrarre automaticamente i file ZIP per accedere ai dati JSON
 
 È utile quando si conosce già l'URL del dataset di interesse e si vuole scaricare rapidamente solo i file relativi a quel dataset specifico.
+
+### Download con Smistamento Automatico (NUOVO)
+
+La nuova funzionalità di download con smistamento automatico permette di:
+
+1. **Verifica file esistenti**: Controlla automaticamente se i file sono già presenti in `/database/JSON/` per evitare riscaricamenti inutili
+2. **Smistamento intelligente**: Classifica automaticamente i file nelle cartelle appropriate basandosi sui nomi delle cartelle esistenti
+3. **Organizzazione automatica**: I file vengono organizzati in cartelle come:
+   - `smartcig_json/` per file relativi a SmartCIG
+   - `aggiudicatari_json/` per file sugli aggiudicatari
+   - `categorie-opera_json/` per categorie di opere
+   - E molte altre cartelle specifiche
+
+**Requisiti**: 
+- Il mount point `/database/JSON/` deve essere disponibile
+- Le cartelle di destinazione devono essere create in anticipo
+
+**Vantaggi**:
+- Evita riscaricamenti di file già presenti
+- Organizza automaticamente i file scaricati
+- Estrae automaticamente i file ZIP se richiesto
+- Fornisce un riepilogo dettagliato dell'operazione
 
 ## Risoluzione dei problemi
 
@@ -163,4 +200,62 @@ Se tmux non funziona, puoi semplicemente eseguire l'applicazione direttamente:
 ```bash
 source venv/bin/activate
 python3 run_anacd2.py
+```
+
+## Script di Deployment e Gestione
+
+Il progetto include script semplificati per il deployment e la gestione su Linux:
+
+### Script Disponibili
+
+- **`server_setup.sh`**: Script di setup iniziale che:
+  - Verifica e installa Python 3 e pip
+  - Crea l'ambiente virtuale
+  - Installa tutte le dipendenze
+  - Configura la directory /database/JSON
+  - Crea le cartelle per lo smistamento automatico
+
+- **`start.sh`**: Script di avvio semplice che:
+  - Attiva l'ambiente virtuale
+  - Verifica la configurazione
+  - Avvia l'applicazione
+  - Supporta la modalità di ricerca approfondita
+
+- **`anac_manager.py`**: Manager completo con menu interattivo che:
+  - Gestisce deployment, aggiornamento e avvio
+  - Mostra lo stato del sistema
+  - Esegue test di installazione
+  - Supporta tmux per sessioni in background
+
+### Utilizzo degli Script
+
+```bash
+# Setup iniziale (una volta sola)
+chmod +x server_setup.sh
+./server_setup.sh
+
+# Avvio semplice
+chmod +x start.sh
+./start.sh
+
+# Manager completo (opzionale)
+python3 anac_manager.py
+```
+
+### Gestione Sessioni tmux
+
+Se usi tmux per l'esecuzione in background:
+
+```bash
+# Collegarsi a una sessione esistente
+tmux attach -t anac
+
+# Lista sessioni attive
+tmux list-sessions
+
+# Terminare una sessione
+tmux kill-session -t anac
+
+# Staccarsi da una sessione (lasciandola attiva)
+# Premi Ctrl+B, poi D
 ``` 

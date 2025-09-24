@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  anac-downloader:
+    build: .
+    container_name: anac-json-downloader
+    volumes:
+      # Mount point per i dati
+      - anac-data:/database
+      # Mount point per i log
+      - ./log:/app/log
+      # Mount point per la cache
+      - ./cache:/app/cache
+      # Mount point per i download temporanei
+      - ./downloads:/app/downloads
+    environment:
+      - ANAC_THOROUGH_SEARCH=0
+      - NO_PLAYWRIGHT=0
+    restart: unless-stopped
+    # Se vuoi esporre l'applicazione (per API future)
+    # ports:
+    #   - "8000:8000"
+    
+    # Comando personalizzato per avvio interattivo
+    stdin_open: true
+    tty: true
+
+volumes:
+  anac-data:
+    driver: local
