@@ -5,12 +5,8 @@ from pathlib import Path
 import time
 import re
 import os
-try:
-    # Try relative import format (when used as a package)
-    from .utils import is_json_or_zip_link, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
-except ImportError:
-    # Fallback to direct import (when used directly)
-    from utils import is_json_or_zip_link, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
+# Import from utils module
+from .utils import is_json_or_zip_link, load_datasets_from_cache, save_datasets_to_cache, load_direct_links_from_cache, save_direct_links_to_cache
 
 # Check if Playwright should be disabled
 NO_PLAYWRIGHT = os.environ.get('NO_PLAYWRIGHT', '0') == '1'

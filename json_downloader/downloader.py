@@ -8,12 +8,8 @@ import zipfile
 import math
 import datetime
 from pathlib import Path
-try:
-    # Try relative import format (when used as a package)
-    from .utils import file_exists, ensure_dir, extract_zip_files, format_size
-except ImportError:
-    # Fallback to direct import (when used directly)
-    from utils import file_exists, ensure_dir, extract_zip_files, format_size
+# Import from utils module
+from .utils import file_exists, ensure_dir, extract_zip_files, format_size
 
 def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, logger=None, show_progress=True, check_database=True):
     """
