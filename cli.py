@@ -126,6 +126,7 @@ class ANACDownloaderCLI:
             print(f"{start_choice+7}. Scarica file JSON/ZIP da un URL dataset specifico")
             print(f"{start_choice+8}. Scarica direttamente da un link personalizzato")
             print(f"{start_choice+9}. Estrai tutti i file ZIP in /database")
+            print(f"{start_choice+10}. Download con smistamento automatico in /database/JSON")
             print("0. Esci dal programma")
             
             try:
@@ -174,6 +175,8 @@ class ANACDownloaderCLI:
                     self.download_from_custom_link()
                 elif choice == '10':
                     self.extract_all_zips_to_database()
+                elif choice == '11':
+                    self.download_with_auto_sorting()
                 else:
                     print("Scelta non valida. Riprova.")
             else:
@@ -200,6 +203,8 @@ class ANACDownloaderCLI:
                     self.download_from_custom_link()
                 elif choice == '11':
                     self.extract_all_zips_to_database()
+                elif choice == '12':
+                    self.download_with_auto_sorting()
                 else:
                     print("Scelta non valida. Riprova.")
                     
@@ -1355,6 +1360,162 @@ class ANACDownloaderCLI:
         print(f"✓ File estratti con successo: {extracted_count}")
         print(f"✗ Errori durante l'estrazione: {error_count}")
         print(f"📁 Directory di destinazione: {json_dir}")
+
+    def download_with_auto_sorting(self):
+        """Download con smistamento automatico in /database/JSON."""
+        print("\n" + "=" * 60)
+        print("DOWNLOAD CON SMISTAMENTO AUTOMATICO IN /database/JSON")
+        print("=" * 60)
+        
+        # Verifica che il path /database/JSON esista
+        database_path = "/database/JSON"
+        if not os.path.exists(database_path):
+            print(f"Errore: Il path {database_path} non esiste.")
+            print("Assicurati che il mount point /database sia disponibile.")
+            return
+        
+        print(f"Path database verificato: {database_path}")
+        
+        # Scansiona i file esistenti
+        try:
+            from json_downloader.utils import scan_existing_files
+            existing_files, available_folders = scan_existing_files()
+            
+            print(f"\nTrovate {len(available_folders)} cartelle disponibili per lo smistamento:")
+            for i, folder in enumerate(available_folders, 1):
+                print(f"  {i}. {folder}")
+            
+            print(f"\nTrovati {len(existing_files)} file già presenti nel database.")
+            
+        except Exception as e:
+            print(f"Errore nella scansione del database: {e}")
+            return
+        
+        if not self.json_links:
+            print("\nNessun link in cache. Esegui prima lo scraping per trovare file da scaricare.")
+            return
+        
+        print(f"\nSono disponibili {len(self.json_links)} link per il download.")
+        
+        # Chiedi se estrarre gli archivi zip
+        extract_zip = input("\nVuoi estrarre automaticamente i file ZIP? (s/n): ").strip().lower() == 's'
+        
+        # Chiedi se filtrare solo i file JSON
+        filter_json_only = input("Vuoi scaricare solo file JSON e ZIP contenenti JSON? (s/n): ").strip().lower() == 's'
+        
+        if filter_json_only:
+            filtered_links = []
+            for link in self.json_links:
+                link_lower = link.lower()
+                # Mantieni i link che terminano con .json o _json o .json.zip o contengono /json/ nel percorso
+                if (link_lower.endswith('.json') or 
+                    link_lower.endswith('_json.zip') or 
+                    '/json/' in link_lower or 
+                    'format=json' in link_lower):
+                    filtered_links.append(link)
+                # Esclude esplicitamente link che sembrano CSV o TTL o XML
+                elif any(ext in link_lower for ext in ['_csv.', '.csv.', '_ttl.', '.ttl.', '_xml.', '.xml.']):
+                    continue
+                # Per ZIP generici, li include solo se non contengono indicazioni CSV/TTL/XML
+                elif link_lower.endswith('.zip') and not any(ext in link_lower for ext in ['_csv', '.csv', '_ttl', '.ttl', '_xml', '.xml']):
+                    filtered_links.append(link)
+            
+            original_count = len(self.json_links)
+            self.json_links = filtered_links
+            print(f"\nFiltrati {original_count - len(self.json_links)} link non-JSON. Rimasti {len(self.json_links)} link JSON/ZIP.")
+        
+        # Ask how many files to download
+        max_files_input = input("\nQuanti file vuoi scaricare? (0 per tutti, invio = tutti): ").strip()
+        try:
+            max_files = 0 if not max_files_input else int(max_files_input)
+        except ValueError:
+            print("Input non valido. Verranno scaricati tutti i file.")
+            max_files = 0
+        
+        if max_files == 0:
+            links_to_download = list(self.json_links)
+        else:
+            links_to_download = list(self.json_links)[:max_files]
+        
+        print(f"\nVerranno scaricati {len(links_to_download)} file.")
+        
+        # Ask for confirmation
+        confirm = input("Vuoi procedere? (s/n): ").strip().lower()
+        if confirm != 's':
+            print("Download annullato.")
+            return
+        
+        # Download files with auto-sorting
+        print("\nDownload con smistamento automatico in corso...")
+        
+        from json_downloader.downloader import download_with_auto_sorting
+        
+        downloaded_files = []
+        skipped_files = []
+        error_files = []
+        files_by_folder = {}
+        
+        for i, link in enumerate(links_to_download, 1):
+            try:
+                print(f"\n[{i}/{len(links_to_download)}] Elaborazione: {os.path.basename(link.split('?')[0])}")
+                
+                result = download_with_auto_sorting(
+                    link,
+                    self.config['download_dir'],
+                    logger=self.logger,
+                    show_progress=True,
+                    extract_zip=extract_zip
+                )
+                
+                if result['success']:
+                    if result.get('skipped', False):
+                        skipped_files.append(result)
+                        print(f"✓ Saltato: {result['filename']} (già esistente)")
+                    else:
+                        downloaded_files.append(result)
+                        folder = result['target_folder']
+                        if folder not in files_by_folder:
+                            files_by_folder[folder] = []
+                        files_by_folder[folder].append(result['filename'])
+                        print(f"✓ Scaricato: {result['filename']} → {folder}")
+                        
+                        if result.get('extracted_files'):
+                            print(f"  Estratti {len(result['extracted_files'])} file")
+                else:
+                    error_files.append({'link': link, 'error': result.get('error', 'Errore sconosciuto')})
+                    print(f"✗ Errore: {result.get('error', 'Errore sconosciuto')}")
+                    
+            except Exception as e:
+                error_files.append({'link': link, 'error': str(e)})
+                print(f"✗ Errore durante l'elaborazione: {str(e)}")
+                continue
+        
+        # Mostra il riepilogo
+        print("\n" + "=" * 60)
+        print("RIEPILOGO DOWNLOAD CON SMISTAMENTO AUTOMATICO")
+        print("=" * 60)
+        print(f"✓ File scaricati con successo: {len(downloaded_files)}")
+        print(f"⏭️  File saltati (già esistenti): {len(skipped_files)}")
+        print(f"✗ File con errori: {len(error_files)}")
+        
+        if files_by_folder:
+            print(f"\n📁 File organizzati per cartella:")
+            for folder, files in files_by_folder.items():
+                print(f"  {folder}: {len(files)} file")
+                for file in files[:3]:  # Mostra solo i primi 3 file
+                    print(f"    - {file}")
+                if len(files) > 3:
+                    print(f"    ... e altri {len(files) - 3} file")
+        
+        if error_files:
+            print(f"\n❌ Errori riscontrati:")
+            for error in error_files[:5]:  # Mostra solo i primi 5 errori
+                filename = os.path.basename(error['link'].split('?')[0])
+                print(f"  - {filename}: {error['error']}")
+            if len(error_files) > 5:
+                print(f"  ... e altri {len(error_files) - 5} errori")
+        
+        print(f"\n📁 Tutti i file sono stati smistati in: {database_path}")
 
     def run(self):
         """Run the CLI interface."""

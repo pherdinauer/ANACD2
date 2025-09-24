@@ -157,11 +157,11 @@ def is_json_or_zip_link(url):
     
     # Pattern per ZIP che probabilmente contengono JSON
     zip_patterns = [
-        '/filesystem/[^/]*_json\.zip',  # Pattern tipico ANAC per ZIP contenenti JSON
-        '/resource/[^/]*_json\.zip',    # Variante per risorse
-        'json.*\.zip',                  # Qualsiasi menzione di JSON seguito da .zip
-        '_json_.*\.zip',
-        'json[^/]*\.zip'
+        r'/filesystem/[^/]*_json\.zip',  # Pattern tipico ANAC per ZIP contenenti JSON
+        r'/resource/[^/]*_json\.zip',    # Variante per risorse
+        r'json.*\.zip',                  # Qualsiasi menzione di JSON seguito da .zip
+        r'_json_.*\.zip',
+        r'json[^/]*\.zip'
     ]
     
     # Percorsi specifici ANAC che sappiamo contenere JSON
@@ -365,3 +365,143 @@ def load_direct_links_from_cache(cache_file="cache/known_direct_links.txt"):
                 if link and link not in links:
                     links.append(link)
     return links
+
+def scan_existing_files(database_path="/database/JSON"):
+    """
+    Scansiona le cartelle esistenti in /database/JSON e crea un mapping
+    dei file già presenti per evitare riscaricamenti.
+    
+    Returns:
+        dict: Mapping {filename: folder_path} per i file esistenti
+        list: Lista delle cartelle disponibili per lo smistamento
+    """
+    existing_files = {}
+    available_folders = []
+    
+    if not os.path.exists(database_path):
+        print(f"Path {database_path} non esiste. Creazione...")
+        try:
+            os.makedirs(database_path, exist_ok=True)
+        except Exception as e:
+            print(f"Errore nella creazione del path {database_path}: {e}")
+            return existing_files, available_folders
+    
+    try:
+        # Scansiona tutte le cartelle in /database/JSON
+        for item in os.listdir(database_path):
+            item_path = os.path.join(database_path, item)
+            
+            # Se è una cartella, aggiungila alla lista delle cartelle disponibili
+            if os.path.isdir(item_path):
+                available_folders.append(item)
+                
+                # Scansiona i file all'interno della cartella
+                try:
+                    for file in os.listdir(item_path):
+                        file_path = os.path.join(item_path, file)
+                        if os.path.isfile(file_path):
+                            # Memorizza il file con il suo percorso completo
+                            existing_files[file] = item_path
+                except Exception as e:
+                    print(f"Errore nella scansione della cartella {item}: {e}")
+        
+        print(f"Trovate {len(available_folders)} cartelle disponibili per lo smistamento")
+        print(f"Trovati {len(existing_files)} file esistenti")
+        
+    except Exception as e:
+        print(f"Errore nella scansione del path {database_path}: {e}")
+    
+    return existing_files, available_folders
+
+def determine_target_folder(filename, available_folders):
+    """
+    Determina la cartella di destinazione per un file basandosi sul nome del file
+    e sulle cartelle disponibili.
+    
+    Args:
+        filename: Nome del file da smistare
+        available_folders: Lista delle cartelle disponibili
+        
+    Returns:
+        str: Nome della cartella di destinazione, o None se non trovata
+    """
+    filename_lower = filename.lower()
+    
+    # Mapping esplicito per pattern comuni
+    folder_mappings = {
+        'aggiudicatari': 'aggiudicatari_json',
+        'aggiudicazioni': 'aggiudicazioni_json', 
+        'avvio-contratto': 'avvio-contratto_json',
+        'bandi-cig': 'bandi-cig-modalita-realizzazio_json',  # o simile
+        'bando_cig': 'bando_cig_json',
+        'categorie-dpcm': 'categorie-dpcm-aggregazione_json',
+        'categorie-opera': 'categorie-opera_json',
+        'centri-di-costo': 'centri-di-costo_json',
+        'collaudo': 'collaudo_json',
+        'cup': 'cup_json',
+        'fine-contratto': 'fine-contratto_json',
+        'fonti-finanziamento': 'fonti-finanziamento_json',
+        'indicatori-pnrrpnc': 'indicatori-pnrrpnc_json',
+        'lavorazioni': 'lavorazioni_json',
+        'misurepremiali-pnrrpnc': 'misurepremiali-pnrrpnc_json',
+        'partecipanti': 'partecipanti_json',
+        'pubblicazioni': 'pubblicazioni_json',
+        'quadro-economico': 'quadro-economico_json',
+        'smartcig': 'smartcig_json',
+        'sospensioni': 'sospensioni_json',
+        'stati-avanzamento': 'stati-avanzamento_json',
+        'stazioni-appaltanti': 'stazioni-appaltanti_json',
+        'subappalti': 'subappalti_json',
+        'varianti': 'varianti_json'
+    }
+    
+    # Cerca corrispondenze esatte
+    for keyword, folder_name in folder_mappings.items():
+        if keyword in filename_lower and folder_name in available_folders:
+            return folder_name
+    
+    # Cerca corrispondenze parziali nelle cartelle disponibili
+    for folder in available_folders:
+        folder_lower = folder.lower()
+        # Rimuovi il suffisso _json per il confronto
+        folder_base = folder_lower.replace('_json', '')
+        
+        # Controlla se il nome del file contiene parti del nome della cartella
+        if any(part in filename_lower for part in folder_base.split('-')):
+            return folder
+    
+    # Se non trova corrispondenze, cerca cartelle che contengono parti del nome del file
+    for folder in available_folders:
+        folder_lower = folder.lower().replace('_json', '')
+        # Estrai parti significative dal nome del file
+        file_parts = filename_lower.replace('.json', '').replace('.zip', '').split('_')
+        
+        for part in file_parts:
+            if len(part) > 3 and part in folder_lower:
+                return folder
+    
+    return None
+
+def should_skip_download(filename, existing_files):
+    """
+    Determina se un file deve essere saltato perché già esistente.
+    
+    Args:
+        filename: Nome del file da verificare
+        existing_files: Dict dei file esistenti {filename: folder_path}
+        
+    Returns:
+        tuple: (should_skip: bool, existing_path: str or None)
+    """
+    # Controllo diretto
+    if filename in existing_files:
+        return True, existing_files[filename]
+    
+    # Controllo senza estensione (per file che potrebbero essere stati estratti)
+    filename_no_ext = os.path.splitext(filename)[0]
+    for existing_file, path in existing_files.items():
+        existing_no_ext = os.path.splitext(existing_file)[0]
+        if filename_no_ext == existing_no_ext:
+            return True, path
+    
+    return False, None

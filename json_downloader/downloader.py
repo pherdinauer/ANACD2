@@ -15,10 +15,13 @@ except ImportError:
     # Fallback to direct import (when used directly)
     from utils import file_exists, ensure_dir, extract_zip_files, format_size
 
-def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, logger=None, show_progress=True):
+def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, logger=None, show_progress=True, check_database=True):
     """
     Scarica un file da un URL con supporto per download a chunk, retry con backoff esponenziale,
     e visualizzazione della velocità e dimensione totale.
+    
+    Args:
+        check_database: Se True, verifica anche i file esistenti in /database/JSON
     """
     # Messaggi di debug per la risoluzione problemi Linux
     print(f"DEBUG_DOWN: Avvio download da {url}")
@@ -28,7 +31,7 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
     dest_path = os.path.abspath(os.path.expanduser(dest_path))
     print(f"DEBUG_DOWN: Percorso normalizzato: {dest_path}")
     
-    # Verifica se il file esiste già
+    # Verifica se il file esiste già nel percorso di destinazione
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         print(f"DEBUG_DOWN: File già esistente con dimensione di {os.path.getsize(dest_path)} bytes")
         # Calcola l'hash del file esistente e ritornalo
@@ -39,6 +42,26 @@ def download_file(url, dest_path, chunk_size=1048576, max_retries=5, backoff=2, 
             if show_progress:
                 print(f"File già esistente. Hash SHA256: {file_hash}")
             return file_hash
+    
+    # Verifica se il file esiste già in /database/JSON
+    if check_database:
+        try:
+            from .utils import scan_existing_files, should_skip_download
+            existing_files, _ = scan_existing_files()
+            filename = os.path.basename(dest_path)
+            
+            should_skip, existing_path = should_skip_download(filename, existing_files)
+            if should_skip:
+                print(f"DEBUG_DOWN: File {filename} già esistente in {existing_path}")
+                if logger:
+                    logger.info(f"File {filename} già esistente in database. Saltato.")
+                if show_progress:
+                    print(f"File {filename} già esistente nel database. Download saltato.")
+                return "EXISTING_IN_DATABASE"
+        except Exception as e:
+            print(f"DEBUG_DOWN: Errore nella verifica database: {e}")
+            if logger:
+                logger.warning(f"Errore nella verifica file esistenti: {e}")
     
     # Crea la directory di destinazione se non esiste
     dest_dir = os.path.dirname(dest_path)
@@ -464,3 +487,131 @@ def process_downloaded_file(file_path, extract_dir=None, logger=None, config=Non
         'is_zip': False,
         'path': file_path
     }
+
+def download_with_auto_sorting(url, base_download_dir, logger=None, show_progress=True, extract_zip=True):
+    """
+    Scarica un file e lo smista automaticamente nella cartella appropriata in /database/JSON.
+    
+    Args:
+        url: URL del file da scaricare
+        base_download_dir: Directory base per i download temporanei
+        logger: Logger per i messaggi
+        show_progress: Se mostrare il progresso del download
+        extract_zip: Se estrarre automaticamente i file ZIP
+        
+    Returns:
+        dict: Informazioni sul file scaricato e smistato
+    """
+    try:
+        from .utils import scan_existing_files, determine_target_folder, ensure_dir
+        
+        # Scansiona i file esistenti e le cartelle disponibili
+        existing_files, available_folders = scan_existing_files()
+        
+        # Estrai il nome del file dall'URL
+        filename = os.path.basename(url.split('?')[0])
+        if not filename:
+            filename = f"download_{int(time.time())}.dat"
+        
+        # Verifica se il file esiste già
+        from .utils import should_skip_download
+        should_skip, existing_path = should_skip_download(filename, existing_files)
+        if should_skip:
+            if logger:
+                logger.info(f"File {filename} già esistente in {existing_path}. Saltato.")
+            if show_progress:
+                print(f"File {filename} già esistente. Saltato.")
+            return {
+                'success': True,
+                'skipped': True,
+                'filename': filename,
+                'existing_path': existing_path,
+                'message': 'File già esistente'
+            }
+        
+        # Determina la cartella di destinazione
+        target_folder = determine_target_folder(filename, available_folders)
+        
+        if not target_folder:
+            # Se non trova una cartella specifica, usa una cartella generica
+            target_folder = "altri_file_json"
+            if logger:
+                logger.warning(f"Nessuna cartella specifica trovata per {filename}, uso {target_folder}")
+            if show_progress:
+                print(f"Nessuna cartella specifica trovata per {filename}, uso {target_folder}")
+        
+        # Crea il percorso di destinazione
+        database_path = "/database/JSON"
+        target_dir = os.path.join(database_path, target_folder)
+        
+        # Assicurati che la cartella di destinazione esista
+        if not ensure_dir(target_dir):
+            if logger:
+                logger.error(f"Impossibile creare la cartella {target_dir}")
+            return {
+                'success': False,
+                'error': f"Impossibile creare la cartella {target_dir}"
+            }
+        
+        # Percorso completo del file di destinazione
+        dest_path = os.path.join(target_dir, filename)
+        
+        # Scarica il file
+        if show_progress:
+            print(f"Scaricamento di {filename} in {target_folder}...")
+        
+        file_hash = download_file(
+            url, 
+            dest_path, 
+            logger=logger, 
+            show_progress=show_progress,
+            check_database=False  # Non controllare di nuovo il database
+        )
+        
+        if not file_hash or file_hash == "EXISTING_IN_DATABASE":
+            return {
+                'success': False,
+                'error': 'Download fallito'
+            }
+        
+        result = {
+            'success': True,
+            'filename': filename,
+            'target_folder': target_folder,
+            'dest_path': dest_path,
+            'hash': file_hash,
+            'extracted_files': []
+        }
+        
+        # Se è un file ZIP e l'estrazione è abilitata
+        if dest_path.lower().endswith('.zip') and extract_zip:
+            if show_progress:
+                print(f"Estrazione di {filename}...")
+            
+            # Estrai nella stessa cartella
+            extract_dir = os.path.splitext(dest_path)[0]
+            try:
+                os.makedirs(extract_dir, exist_ok=True)
+                extracted = extract_zip_files(dest_path, extract_dir, logger)
+                result['extracted_files'] = extracted
+                
+                if show_progress:
+                    print(f"Estratti {len(extracted)} file da {filename}")
+                
+            except Exception as e:
+                if logger:
+                    logger.error(f"Errore durante l'estrazione di {filename}: {e}")
+                result['extraction_error'] = str(e)
+        
+        if logger:
+            logger.info(f"File {filename} scaricato e smistato in {target_folder}")
+        
+        return result
+        
+    except Exception as e:
+        if logger:
+            logger.error(f"Errore durante il download con smistamento: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
